@@ -466,6 +466,8 @@ def main():
         'temp':        TEMP_NAMES[0],
         'active_slot': 0,
         'base_octave': 4,   # 'A' computer key → C of this octave
+        'anim_phi_x':  False,
+        'anim_phi_xy': False,
     }
 
     piano_keys = _build_piano_keys()
@@ -499,16 +501,18 @@ def main():
         fig.add_axes([SLOT_X_R, SLOT_Y_BOT, SLOT_W, SLOT_H_BOT]),
     ]
 
-    px_w   = MAIN_W * 0.47
-    ax_px  = fig.add_axes([MAIN_X,              PHASE_Y, px_w, PHASE_H])
-    ax_pxy = fig.add_axes([MAIN_X + MAIN_W - px_w, PHASE_Y, px_w, PHASE_H])
+    _ANIM_W = 0.055
+    ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
+    ax_px       = fig.add_axes([0.075,  PHASE_Y, 0.380,   PHASE_H])
+    ax_pxy      = fig.add_axes([0.545,  PHASE_Y, 0.380,   PHASE_H])
+    ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
 
     n_temp  = len(TEMP_NAMES)
     btn_w   = 0.98 / n_temp
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
                for i in range(n_temp)]
 
-    for ax in ax_slots + [ax_piano, ax_px, ax_pxy] + btn_axs:
+    for ax in ax_slots + [ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy] + btn_axs:
         ax.set_facecolor(BG)
 
     # Static labels
@@ -532,6 +536,17 @@ def main():
     for sl in (sl_px, sl_pxy):
         sl.label.set_color(WHITE)
         sl.valtext.set_color(WHITE)
+
+    # Animate buttons (one per slider, at the outer edges)
+    btn_anim_px  = Button(ax_anim_px,  '▶', color=BTN_OFF, hovercolor='#162840')
+    btn_anim_pxy = Button(ax_anim_pxy, '▶', color=BTN_OFF, hovercolor='#162840')
+    for btn in (btn_anim_px, btn_anim_pxy):
+        btn.label.set_color(WHITE)
+        btn.label.set_fontsize(12)
+    for ax in (ax_anim_px, ax_anim_pxy):
+        for sp in ax.spines.values():
+            sp.set_edgecolor(BTN_EDGE_OFF)
+            sp.set_linewidth(0.5)
 
     # Temperament buttons
     btns = []
@@ -634,6 +649,22 @@ def main():
     for i, (btn, name) in enumerate(zip(btns, TEMP_NAMES)):
         btn.on_clicked(make_temp_cb(i, name))
 
+    def _make_anim_toggle(key, ax_btn, btn):
+        def cb(_):
+            state[key] = not state[key]
+            on = state[key]
+            ax_btn.set_facecolor(BTN_ON if on else BTN_OFF)
+            for sp in ax_btn.spines.values():
+                sp.set_edgecolor(BTN_EDGE_ON if on else BTN_EDGE_OFF)
+                sp.set_linewidth(1.4 if on else 0.5)
+            btn.label.set_text('■' if on else '▶')
+            btn.label.set_color(ACCENT if on else WHITE)
+            fig.canvas.draw_idle()
+        return cb
+
+    btn_anim_px.on_clicked(_make_anim_toggle('anim_phi_x',  ax_anim_px,  btn_anim_px))
+    btn_anim_pxy.on_clicked(_make_anim_toggle('anim_phi_xy', ax_anim_pxy, btn_anim_pxy))
+
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event',    on_key)
 
@@ -657,8 +688,10 @@ def main():
     else:
         midi_status.set_text('MIDI unavailable  (pip install mido python-rtmidi)')
 
+    _ANIM_STEP = 0.05  # radians per 40 ms  ≈ 5 s per full 2π cycle
+
     def _poll_midi():
-        changed = False
+        midi_changed = False
         while not _midi_q.empty():
             midi_note = _midi_q.get_nowait()
             note   = NOTE_NAMES[midi_note % 12]
@@ -667,8 +700,12 @@ def main():
             state['notes'][slot] = note
             state['octs'][slot]  = octave
             state['active_slot'] = (slot + 1) % 4
-            changed = True
-        if changed:
+            midi_changed = True
+        if state['anim_phi_x']:
+            sl_px.set_val((state['phi_x'] + _ANIM_STEP) % (2 * np.pi))
+        if state['anim_phi_xy']:
+            sl_pxy.set_val((state['phi_xy'] + _ANIM_STEP) % (2 * np.pi))
+        if midi_changed:
             full_redraw()
 
     _midi_timer = fig.canvas.new_timer(interval=40)
