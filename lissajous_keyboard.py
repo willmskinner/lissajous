@@ -503,8 +503,8 @@ def main():
 
     _ANIM_W = 0.055
     ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
-    ax_px       = fig.add_axes([0.075,  PHASE_Y, 0.380,   PHASE_H])
-    ax_pxy      = fig.add_axes([0.545,  PHASE_Y, 0.380,   PHASE_H])
+    ax_px       = fig.add_axes([0.090,  PHASE_Y, 0.330,   PHASE_H])
+    ax_pxy      = fig.add_axes([0.580,  PHASE_Y, 0.330,   PHASE_H])
     ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
 
     n_temp  = len(TEMP_NAMES)
