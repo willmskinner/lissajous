@@ -31,6 +31,12 @@ try:
 except ImportError:
     _MIDO_OK = False
 
+try:
+    import sounddevice as _sd
+    _SD_OK = True
+except ImportError:
+    _SD_OK = False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Note names & interval labels
 # ─────────────────────────────────────────────────────────────────────────────
@@ -448,6 +454,126 @@ def _midi_worker(q, port_name):
         pass
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Audio engine
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AUDIO_SR    = 44100
+_AUDIO_BLOCK = 512
+
+# Harmonic series for each tone type: list of (harmonic_number, amplitude)
+_TONE_HARMONICS = {
+    'sine':   [(1, 1.000)],
+    'epiano': [(1, 0.600), (2, 0.280), (3, 0.080), (4, 0.020)],
+    'piano':  [(1, 0.380), (2, 0.220), (3, 0.140), (4, 0.090),
+               (5, 0.055), (6, 0.035), (7, 0.020), (8, 0.012)],
+}
+
+
+class _AudioEngine:
+    """Real-time additive synthesis engine for four simultaneous notes."""
+
+    def __init__(self):
+        self._sr     = _AUDIO_SR
+        self._freqs  = np.ones(4) * 440.0
+        self._phases = np.zeros(4)   # phase accumulator per note
+        self._tphase = 0.0           # tremolo phase (e-piano)
+        self._tone   = 'sine'
+        self._vol    = 0.25
+        self._on     = False
+        self._lock   = threading.Lock()
+        self._stream = None
+
+    def set_freqs(self, freqs):
+        with self._lock:
+            self._freqs = np.array(freqs, dtype=np.float64)
+
+    def set_tone(self, tone):
+        with self._lock:
+            self._tone = tone
+
+    def set_volume(self, v):
+        with self._lock:
+            self._vol = float(v)
+
+    def _callback(self, outdata, frames, _time, _status):
+        with self._lock:
+            freqs  = self._freqs.copy()
+            phases = self._phases.copy()
+            tphase = self._tphase
+            tone   = self._tone
+            vol    = self._vol
+            on     = self._on
+
+        n   = frames
+        idx = np.arange(n, dtype=np.float64)
+        out = np.zeros(n)
+        harmonics  = _TONE_HARMONICS.get(tone, _TONE_HARMONICS['sine'])
+        new_phases = phases.copy()
+
+        for i in range(4):
+            f   = freqs[i]
+            dp  = 2.0 * np.pi * f / self._sr
+            phi = phases[i] + dp * idx        # fundamental phase at each sample
+            sig = np.zeros(n)
+            for h, amp in harmonics:
+                sig += amp * np.sin(h * phi)  # harmonic h is simply h * fundamental
+            out += sig
+            new_phases[i] = (phases[i] + dp * n) % (2.0 * np.pi)
+
+        # E-piano tremolo: 5 Hz amplitude modulation
+        if tone == 'epiano':
+            tdp    = 2.0 * np.pi * 5.0 / self._sr
+            trem   = 1.0 + 0.06 * np.sin(tphase + tdp * idx)
+            out   *= trem
+            new_tp = (tphase + tdp * n) % (2.0 * np.pi)
+        else:
+            new_tp = tphase
+
+        if not on:
+            out[:] = 0.0
+        out  = np.tanh(out * vol / 4.0)   # scale then soft-clip
+        mono = out.astype(np.float32)
+        outdata[:, 0] = mono
+        if outdata.shape[1] > 1:
+            outdata[:, 1] = mono
+
+        with self._lock:
+            self._phases = new_phases
+            self._tphase = new_tp
+
+    def enable(self, freqs):
+        with self._lock:
+            self._freqs = np.array(freqs, dtype=np.float64)
+            self._on    = True
+        if self._stream is None or not self._stream.active:
+            try:
+                self._stream = _sd.OutputStream(
+                    samplerate = self._sr,
+                    channels   = 2,
+                    callback   = self._callback,
+                    blocksize  = _AUDIO_BLOCK,
+                    dtype      = 'float32',
+                )
+                self._stream.start()
+            except Exception:
+                with self._lock:
+                    self._on = False
+
+    def disable(self):
+        with self._lock:
+            self._on = False
+
+    def close(self):
+        self.disable()
+        if self._stream:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+
+
+_audio_engine = _AudioEngine()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -482,13 +608,14 @@ def main():
 
     # ── Layout ────────────────────────────────────────────────────────────────
     TEMP_Y,  TEMP_H  = 0.010, 0.055
-    PHASE_Y, PHASE_H = 0.082, 0.046   # taller sliders, pushed up to clear TEMP label
-    PIANO_Y, PIANO_H = 0.147, 0.140   # raised to give MIDI status its own gap
-    MAIN_X,  MAIN_Y  = 0.140, 0.325   # raised to clear piano instruction + xlabel
-    MAIN_W,  MAIN_H  = 0.720, 0.605   # slightly shorter to keep top at 0.930
+    PHASE_Y, PHASE_H = 0.082, 0.046
+    PIANO_Y, PIANO_H = 0.147, 0.140
+    AUDIO_Y, AUDIO_H = 0.295, 0.028   # audio controls strip between piano and graph
+    MAIN_X,  MAIN_Y  = 0.140, 0.330   # raised slightly to clear audio strip
+    MAIN_W,  MAIN_H  = 0.720, 0.600   # keep top at 0.930
     SLOT_X_L, SLOT_X_R, SLOT_W = 0.010, 0.875, 0.110
     SLOT_Y_TOP, SLOT_H_TOP = 0.620, 0.310
-    SLOT_Y_BOT, SLOT_H_BOT = 0.325, 0.285  # bottom of slot matches new MAIN_Y
+    SLOT_Y_BOT, SLOT_H_BOT = 0.330, 0.280
 
     ax_main  = fig.add_axes([MAIN_X,  MAIN_Y,  MAIN_W,  MAIN_H])
     ax_piano = fig.add_axes([0.010,   PIANO_Y, 0.980,   PIANO_H])
@@ -512,7 +639,9 @@ def main():
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
                for i in range(n_temp)]
 
-    for ax in ax_slots + [ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy] + btn_axs:
+    for ax in (ax_slots + [ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
+                           ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
+               + btn_axs):
         ax.set_facecolor(BG)
 
     # Static labels
@@ -523,10 +652,12 @@ def main():
     fig.text(0.50, TEMP_Y + TEMP_H + 0.005, 'T E M P E R A M E N T',
              ha='center', va='bottom', color='#556677',
              fontsize=7.5, fontweight='bold')
-    fig.text(0.50, PIANO_Y + PIANO_H + 0.003,
-             'Click a key  ·  A–J = C–B (home oct)  ·  K,O,L,P = next oct  ·  '
-             '[ ] shift octave  ·  1–4 / Tab select slot',
-             ha='center', va='bottom', color='#3a4a5a', fontsize=7)
+    # Audio controls strip
+    ax_aud_on   = fig.add_axes([0.010, AUDIO_Y, 0.075, AUDIO_H])
+    ax_aud_sine = fig.add_axes([0.092, AUDIO_Y, 0.080, AUDIO_H])
+    ax_aud_ep   = fig.add_axes([0.177, AUDIO_Y, 0.095, AUDIO_H])
+    ax_aud_pno  = fig.add_axes([0.277, AUDIO_Y, 0.080, AUDIO_H])
+    ax_vol      = fig.add_axes([0.368, AUDIO_Y, 0.622, AUDIO_H])
 
     # Phase sliders
     sl_px  = Slider(ax_px,  'φ inner X', 0, 2 * np.pi,
@@ -547,6 +678,37 @@ def main():
         for sp in ax.spines.values():
             sp.set_edgecolor(BTN_EDGE_OFF)
             sp.set_linewidth(0.5)
+
+    # Audio controls
+    _AUDIO_TONE_NAMES = [('sine', 'Sine'), ('epiano', 'E. Piano'), ('piano', 'Piano')]
+    btn_aud_on   = Button(ax_aud_on,   '♪  off', color=BTN_OFF, hovercolor='#162840')
+    btn_aud_sine = Button(ax_aud_sine, 'Sine',    color=BTN_OFF, hovercolor='#162840')
+    btn_aud_ep   = Button(ax_aud_ep,   'E. Piano',color=BTN_OFF, hovercolor='#162840')
+    btn_aud_pno  = Button(ax_aud_pno,  'Piano',   color=BTN_OFF, hovercolor='#162840')
+    sl_vol = Slider(ax_vol, 'Vol', 0.0, 1.0, valinit=0.25, color='#2a5a3a')
+    sl_vol.label.set_color(WHITE)
+    sl_vol.valtext.set_color(WHITE)
+
+    _aud_tone_axs  = [ax_aud_sine, ax_aud_ep, ax_aud_pno]
+    _aud_tone_btns = [btn_aud_sine, btn_aud_ep, btn_aud_pno]
+
+    def _style_aud_tone(active_key):
+        for (key, _), ax, btn in zip(_AUDIO_TONE_NAMES, _aud_tone_axs, _aud_tone_btns):
+            on = (key == active_key)
+            ax.set_facecolor(BTN_ON if on else BTN_OFF)
+            for sp in ax.spines.values():
+                sp.set_edgecolor(BTN_EDGE_ON if on else BTN_EDGE_OFF)
+                sp.set_linewidth(1.4 if on else 0.5)
+            btn.label.set_color(WHITE if on else '#778899')
+
+    for ax in _aud_tone_axs + [ax_aud_on]:
+        for sp in ax.spines.values():
+            sp.set_edgecolor(BTN_EDGE_OFF)
+            sp.set_linewidth(0.5)
+    for btn in _aud_tone_btns + [btn_aud_on]:
+        btn.label.set_fontsize(8)
+        btn.label.set_color('#778899')
+    _style_aud_tone('sine')   # sine pre-selected
 
     # Temperament buttons
     btns = []
@@ -574,6 +736,10 @@ def main():
         redraw_slots()
         draw_piano(ax_piano, piano_keys, state)
         refresh()
+        if _audio_engine._on:
+            _audio_engine.set_freqs(
+                [note_freq(state['notes'][i], state['octs'][i], state['temp'])
+                 for i in range(4)])
 
     # ── Event callbacks ───────────────────────────────────────────────────────
 
@@ -665,6 +831,43 @@ def main():
     btn_anim_px.on_clicked(_make_anim_toggle('anim_phi_x',  ax_anim_px,  btn_anim_px))
     btn_anim_pxy.on_clicked(_make_anim_toggle('anim_phi_xy', ax_anim_pxy, btn_anim_pxy))
 
+    # ── Audio callbacks ───────────────────────────────────────────────────────
+
+    def _toggle_audio(_):
+        if not _SD_OK:
+            return
+        if _audio_engine._on:
+            _audio_engine.disable()
+            ax_aud_on.set_facecolor(BTN_OFF)
+            for sp in ax_aud_on.spines.values():
+                sp.set_edgecolor(BTN_EDGE_OFF)
+                sp.set_linewidth(0.5)
+            btn_aud_on.label.set_text('♪  off')
+            btn_aud_on.label.set_color('#778899')
+        else:
+            freqs = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
+                     for i in range(4)]
+            _audio_engine.enable(freqs)
+            ax_aud_on.set_facecolor(BTN_ON)
+            for sp in ax_aud_on.spines.values():
+                sp.set_edgecolor(BTN_EDGE_ON)
+                sp.set_linewidth(1.4)
+            btn_aud_on.label.set_text('♪  on')
+            btn_aud_on.label.set_color(ACCENT)
+        fig.canvas.draw_idle()
+
+    def _make_tone_cb(key):
+        def cb(_):
+            _audio_engine.set_tone(key)
+            _style_aud_tone(key)
+            fig.canvas.draw_idle()
+        return cb
+
+    btn_aud_on.on_clicked(_toggle_audio)
+    for (key, _), btn in zip(_AUDIO_TONE_NAMES, _aud_tone_btns):
+        btn.on_clicked(_make_tone_cb(key))
+    sl_vol.on_changed(_audio_engine.set_volume)
+
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event',    on_key)
 
@@ -711,6 +914,8 @@ def main():
     _midi_timer = fig.canvas.new_timer(interval=40)
     _midi_timer.add_callback(_poll_midi)
     _midi_timer.start()
+
+    fig.canvas.mpl_connect('close_event', lambda _e: _audio_engine.close())
 
     plt.show()
 
