@@ -609,7 +609,7 @@ def main():
     # ── Layout ────────────────────────────────────────────────────────────────
     TEMP_Y,  TEMP_H  = 0.010, 0.055
     PHASE_Y, PHASE_H = 0.082, 0.046
-    PIANO_Y, PIANO_H = 0.147, 0.140
+    PIANO_Y, PIANO_H = 0.147, 0.100
     AUDIO_Y, AUDIO_H = 0.295, 0.028   # audio controls strip between piano and graph
     MAIN_X,  MAIN_Y  = 0.140, 0.330   # raised slightly to clear audio strip
     MAIN_W,  MAIN_H  = 0.720, 0.600   # keep top at 0.930
@@ -634,6 +634,13 @@ def main():
     ax_pxy      = fig.add_axes([0.580,  PHASE_Y, 0.330,   PHASE_H])
     ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
 
+    # Audio controls strip
+    ax_aud_on   = fig.add_axes([0.010, AUDIO_Y, 0.075, AUDIO_H])
+    ax_aud_sine = fig.add_axes([0.092, AUDIO_Y, 0.080, AUDIO_H])
+    ax_aud_ep   = fig.add_axes([0.177, AUDIO_Y, 0.095, AUDIO_H])
+    ax_aud_pno  = fig.add_axes([0.277, AUDIO_Y, 0.080, AUDIO_H])
+    ax_vol      = fig.add_axes([0.368, AUDIO_Y, 0.622, AUDIO_H])
+
     n_temp  = len(TEMP_NAMES)
     btn_w   = 0.98 / n_temp
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
@@ -652,13 +659,6 @@ def main():
     fig.text(0.50, TEMP_Y + TEMP_H + 0.005, 'T E M P E R A M E N T',
              ha='center', va='bottom', color='#556677',
              fontsize=7.5, fontweight='bold')
-    # Audio controls strip
-    ax_aud_on   = fig.add_axes([0.010, AUDIO_Y, 0.075, AUDIO_H])
-    ax_aud_sine = fig.add_axes([0.092, AUDIO_Y, 0.080, AUDIO_H])
-    ax_aud_ep   = fig.add_axes([0.177, AUDIO_Y, 0.095, AUDIO_H])
-    ax_aud_pno  = fig.add_axes([0.277, AUDIO_Y, 0.080, AUDIO_H])
-    ax_vol      = fig.add_axes([0.368, AUDIO_Y, 0.622, AUDIO_H])
-
     # Phase sliders
     sl_px  = Slider(ax_px,  'φ inner X', 0, 2 * np.pi,
                     valinit=state['phi_x'],  color='#996633')
