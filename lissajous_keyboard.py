@@ -196,7 +196,12 @@ PIANO_BORDER = '#111122'
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _init_curve_ax(ax):
-    """Set up ax_main once: static decorations + persistent LineCollection."""
+    """Set up ax_main once: static decorations + persistent LineCollection.
+
+    Pre-computes the constant color/alpha array and pre-allocates the segment
+    buffer so neither needs to be recreated on each animation frame.
+    Returns (lc, segs_buf).
+    """
     ax.set_facecolor(BG)
     for v in [-1, -0.5, 0, 0.5, 1]:
         ax.axhline(v, color=DIM, lw=0.3, alpha=0.6)
@@ -211,25 +216,37 @@ def _init_curve_ax(ax):
     ax.set_xlabel('', color=X_COL, fontsize=9, labelpad=5)
     ax.set_ylabel('', color=Y_COL, fontsize=9, labelpad=5, rotation=90)
     ax.set_title('', color=WHITE, fontsize=10, pad=10)
-    lc = LineCollection([], linewidths=0.9, capstyle='butt')
-    ax.add_collection(lc)
-    return lc
 
-
-def _update_curve(lc, ax, freqs, phi_x, phi_xy, labels, temperament):
-    """Update the persistent LineCollection and axis labels in-place."""
-    f1, f2, f3, f4 = freqs
-    x, y  = lissajous_4(freqs, phi_x, phi_xy)
-    pts   = np.stack([x, y], axis=1)[:, np.newaxis, :]
-    segs  = np.concatenate([pts[:-1], pts[1:]], axis=1)
-    n_seg = len(segs)
+    # Pre-compute the gradient color array — identical every frame
+    n_seg  = 8000 - 1
     r, g, b = mcolors.to_rgb(CURVE_COL)
     alphas = np.linspace(0.15, 1.0, n_seg)
     colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
                                np.full(n_seg, b), alphas])
-    lc.set_segments(segs)
-    lc.set_color(colors)
 
+    # Pre-allocate the segment buffer — filled in-place each frame
+    segs_buf = np.empty((n_seg, 2, 2))
+
+    lc = LineCollection([], linewidths=0.9, capstyle='butt')
+    lc.set_color(colors)   # set once; survives set_segments() calls
+    ax.add_collection(lc)
+    return lc, segs_buf
+
+
+def _fill_curve(lc, freqs, phi_x, phi_xy, segs_buf):
+    """Update curve geometry only — no label recalculation.
+    Called every animation frame; avoids all per-frame allocation."""
+    x, y = lissajous_4(freqs, phi_x, phi_xy)
+    xy   = np.stack([x, y], axis=1)   # (n, 2)
+    segs_buf[:, 0, :] = xy[:-1]
+    segs_buf[:, 1, :] = xy[1:]
+    lc.set_segments(segs_buf)
+
+
+def _update_curve(lc, ax, freqs, phi_x, phi_xy, labels, temperament, segs_buf):
+    """Update curve geometry + axis labels. Called on note/temperament change."""
+    _fill_curve(lc, freqs, phi_x, phi_xy, segs_buf)
+    f1, f2, f3, f4 = freqs
     rx, ix = describe_ratio(f1, f2)
     ry, iy = describe_ratio(f3, f4)
     ix_s = f' – {ix}' if ix else ''
@@ -716,7 +733,7 @@ def main():
     SLOT_Y_BOT, SLOT_H_BOT = 0.330, 0.280
 
     ax_main  = fig.add_axes([MAIN_X,  MAIN_Y,  MAIN_W,  MAIN_H])
-    _curve_lc = _init_curve_ax(ax_main)
+    _curve_lc, _segs_buf = _init_curve_ax(ax_main)
 
     ax_piano = fig.add_axes([0.010,   PIANO_Y, 0.980,   PIANO_H])
     _piano_arts = _init_piano_ax(ax_piano, piano_keys)
@@ -830,12 +847,21 @@ def main():
         for i in range(4):
             draw_slot(ax_slots[i], i, state, _slot_arts[i])
 
+    def _refresh_anim(_=None):
+        """Fast path: geometry only. Labels don't depend on phase, skip them."""
+        freqs = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
+                 for i in range(4)]
+        _fill_curve(_curve_lc, freqs, state['phi_x'], state['phi_xy'], _segs_buf)
+        fig.canvas.draw_idle()
+
     def refresh(_=None):
+        """Full refresh: geometry + labels. Called on note/temperament change."""
         freqs  = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
                   for i in range(4)]
         labels = [f'{state["notes"][i]}{state["octs"][i]}' for i in range(4)]
         _update_curve(_curve_lc, ax_main, freqs,
-                      state['phi_x'], state['phi_xy'], labels, state['temp'])
+                      state['phi_x'], state['phi_xy'], labels, state['temp'],
+                      _segs_buf)
         fig.canvas.draw_idle()
 
     def full_redraw():
@@ -915,8 +941,8 @@ def main():
             full_redraw()
         return cb
 
-    sl_px.on_changed( lambda v: state.update({'phi_x':  v}) or refresh())
-    sl_pxy.on_changed(lambda v: state.update({'phi_xy': v}) or refresh())
+    sl_px.on_changed( lambda v: state.update({'phi_x':  v}) or _refresh_anim())
+    sl_pxy.on_changed(lambda v: state.update({'phi_xy': v}) or _refresh_anim())
 
     for i, (btn, name) in enumerate(zip(btns, TEMP_NAMES)):
         btn.on_clicked(make_temp_cb(i, name))
