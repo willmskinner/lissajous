@@ -505,7 +505,7 @@ def _midi_worker(q, port_name):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _AUDIO_SR    = 44100
-_AUDIO_BLOCK = 512
+_AUDIO_BLOCK = 2048
 
 # Harmonic series for each tone type: list of (harmonic_number, amplitude)
 _TONE_HARMONICS = {
