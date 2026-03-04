@@ -847,31 +847,47 @@ def main():
         for i in range(4):
             draw_slot(ax_slots[i], i, state, _slot_arts[i])
 
+    # _blit[0] = saved background pixel buffer (ax_main without the curve)
+    # _blit[1] = guard flag to prevent re-entrant _save_bg calls
+    _blit = [None, False]
+
+    def _save_bg():
+        """Save ax_main background (LC hidden) so animation can blit over it."""
+        if _blit[1]:
+            return
+        _blit[1] = True
+        _curve_lc.set_visible(False)
+        fig.canvas.draw()                                    # sync render, LC absent
+        _blit[0] = fig.canvas.copy_from_bbox(ax_main.bbox)  # capture pixel buffer
+        _curve_lc.set_visible(True)
+        ax_main.draw_artist(_curve_lc)                       # restore LC on screen
+        fig.canvas.blit(ax_main.bbox)
+        _blit[1] = False
+
     def _refresh_anim(_=None):
-        """Fast path: geometry only. Labels don't depend on phase, skip them."""
+        """Fast animation path: restore saved pixels, draw only the LC, blit."""
         freqs = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
                  for i in range(4)]
         _fill_curve(_curve_lc, freqs, state['phi_x'], state['phi_xy'], _segs_buf)
-        fig.canvas.draw_idle()
+        if _blit[0] is not None:
+            fig.canvas.restore_region(_blit[0])
+            ax_main.draw_artist(_curve_lc)
+            fig.canvas.blit(ax_main.bbox)
+        else:
+            fig.canvas.draw_idle()
 
-    def refresh(_=None):
-        """Full refresh: geometry + labels. Called on note/temperament change."""
+    def full_redraw():
+        redraw_slots()
+        update_piano(_piano_arts, piano_keys, state)
         freqs  = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
                   for i in range(4)]
         labels = [f'{state["notes"][i]}{state["octs"][i]}' for i in range(4)]
         _update_curve(_curve_lc, ax_main, freqs,
                       state['phi_x'], state['phi_xy'], labels, state['temp'],
                       _segs_buf)
-        fig.canvas.draw_idle()
-
-    def full_redraw():
-        redraw_slots()
-        update_piano(_piano_arts, piano_keys, state)
-        refresh()
+        _save_bg()   # sync draw + capture background; also puts LC back on screen
         if _audio_engine._on:
-            _audio_engine.set_freqs(
-                [note_freq(state['notes'][i], state['octs'][i], state['temp'])
-                 for i in range(4)])
+            _audio_engine.set_freqs(freqs)
 
     # ── Event callbacks ───────────────────────────────────────────────────────
 
@@ -1047,7 +1063,9 @@ def main():
     _midi_timer.add_callback(_poll_midi)
     _midi_timer.start()
 
-    fig.canvas.mpl_connect('close_event', lambda _e: _audio_engine.close())
+    fig.canvas.mpl_connect('close_event',  lambda _e: _audio_engine.close())
+    fig.canvas.mpl_connect('resize_event', lambda _e: (_blit.__setitem__(0, None),
+                                                        _save_bg()))
 
     plt.show()
 
