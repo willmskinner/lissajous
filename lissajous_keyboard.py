@@ -318,11 +318,11 @@ KB_MAP = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Piano drawing
+# Piano drawing — persistent patches/artists (no ax.clear() on each update)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def draw_piano(ax, keys, state):
-    ax.clear()
+def _init_piano_ax(ax, keys):
+    """Build all piano artists once. Returns artist dict for later updates."""
     ax.set_facecolor(BG)
     ax.set_xlim(-0.3, N_WHITE + 0.3)
     ax.set_ylim(-0.14, 1.04)
@@ -332,64 +332,99 @@ def draw_piano(ax, keys, state):
         sp.set_color(DIM)
         sp.set_linewidth(0.5)
 
-    base_oct = state['base_octave']
-
-    # Build (note, octave) → slot-color map for highlighted keys
-    assigned = {}
-    for i in range(4):
-        assigned[(state['notes'][i], state['octs'][i])] = NOTE_COLS[i]
-
-    # White keys
+    patches = {}
+    for k in keys:        # white keys first so black keys render on top
+        if not k['is_black']:
+            rect = mpatches.Rectangle(
+                (k['x'] + 0.04, k['y'] + 0.02), k['w'] - 0.08, k['h'] - 0.04,
+                facecolor=PIANO_WHITE, edgecolor=PIANO_BORDER,
+                linewidth=0.6, zorder=1)
+            ax.add_patch(rect)
+            patches[(k['note'], k['octave'])] = rect
     for k in keys:
         if k['is_black']:
-            continue
-        nt = (k['note'], k['octave'])
-        fc = assigned.get(nt, PIANO_WHITE)
-        ax.add_patch(mpatches.Rectangle(
-            (k['x'] + 0.04, k['y'] + 0.02), k['w'] - 0.08, k['h'] - 0.04,
-            facecolor=fc, edgecolor=PIANO_BORDER, linewidth=0.6, zorder=1))
+            rect = mpatches.Rectangle(
+                (k['x'], k['y']), k['w'], k['h'],
+                facecolor=PIANO_BLACK, edgecolor='#000000',
+                linewidth=0.5, zorder=2)
+            ax.add_patch(rect)
+            patches[(k['note'], k['octave'])] = rect
 
-    # Black keys (drawn on top)
+    # Position lookup: (note, octave) → (cx, cy, is_black)
+    pos = {}
     for k in keys:
-        if not k['is_black']:
-            continue
-        nt = (k['note'], k['octave'])
-        fc = assigned.get(nt, PIANO_BLACK)
-        ax.add_patch(mpatches.Rectangle(
-            (k['x'], k['y']), k['w'], k['h'],
-            facecolor=fc, edgecolor='#000000', linewidth=0.5, zorder=2))
+        cx = k['x'] + k['w'] / 2
+        cy = (k['y'] + 0.11) if k['is_black'] else (k['y'] + 0.09)
+        pos[(k['note'], k['octave'])] = (cx, cy, k['is_black'])
 
-    # Keyboard shortcut labels on the keys for the current base octave
-    for kb_key, (semi, oct_off) in KB_MAP.items():
-        tgt_note = NOTE_NAMES[semi]
-        tgt_oct  = base_oct + oct_off
-        for k in keys:
-            if k['note'] == tgt_note and k['octave'] == tgt_oct:
-                cx = k['x'] + k['w'] / 2
-                if k['is_black']:
-                    cy, tc, fs = k['y'] + 0.11, '#cccccc', 5.5
-                else:
-                    cy, tc, fs = k['y'] + 0.09, '#334455', 6.0
-                ax.text(cx, cy, kb_key.upper(),
-                        ha='center', va='center',
-                        fontsize=fs, color=tc, zorder=3)
-                break
+    # Shortcut label Text artists — one per KB_MAP entry, repositioned on octave shift
+    shortcuts = {}
+    for kb_key in KB_MAP:
+        shortcuts[kb_key] = ax.text(0, 0, kb_key.upper(),
+                                    ha='center', va='center',
+                                    fontsize=6.0, color='#334455',
+                                    zorder=3, visible=False)
 
-    # Octave labels (C3, C4, …) below each C key
+    # Octave label Text artists — one per C key, always visible
+    oct_labels = {}
     for k in keys:
         if k['note'] == 'C':
-            col = ACCENT if k['octave'] == base_oct else '#3a4a5a'
-            ax.text(k['x'] + 0.5, -0.07, f"C{k['octave']}",
-                    ha='center', va='center',
-                    fontsize=6.5, color=col, zorder=3)
+            oct_labels[k['octave']] = ax.text(
+                k['x'] + 0.5, -0.07, f"C{k['octave']}",
+                ha='center', va='center', fontsize=6.5, color='#3a4a5a', zorder=3)
 
-    # Underline the active base-octave span
+    # Active-octave underline — single Line2D, repositioned on octave shift
+    underline, = ax.plot([], [-0.03, -0.03],
+                         color=ACCENT, lw=1.2, alpha=0.7, zorder=4,
+                         solid_capstyle='round', visible=False)
+
+    return {'patches': patches, 'shortcuts': shortcuts,
+            'oct_labels': oct_labels, 'underline': underline, '_pos': pos}
+
+
+def update_piano(arts, keys, state):
+    """Update piano facecolors, shortcut labels, and octave underline in-place."""
+    patches   = arts['patches']
+    shortcuts = arts['shortcuts']
+    oct_labels = arts['oct_labels']
+    underline  = arts['underline']
+    pos        = arts['_pos']
+    base_oct   = state['base_octave']
+
+    # Reset all keys to default color, then apply slot highlights
+    for (note, _), rect in patches.items():
+        rect.set_facecolor(PIANO_BLACK if note in ('C#','D#','F#','G#','A#')
+                           else PIANO_WHITE)
+    for i in range(4):
+        key = (state['notes'][i], state['octs'][i])
+        if key in patches:
+            patches[key].set_facecolor(NOTE_COLS[i])
+
+    # Reposition shortcut labels for the current base octave
+    for kb_key, (semi, oct_off) in KB_MAP.items():
+        tgt = (NOTE_NAMES[semi], base_oct + oct_off)
+        t = shortcuts[kb_key]
+        if tgt in pos:
+            cx, cy, is_black = pos[tgt]
+            t.set_position((cx, cy))
+            t.set_fontsize(5.5 if is_black else 6.0)
+            t.set_color('#cccccc' if is_black else '#334455')
+            t.set_visible(True)
+        else:
+            t.set_visible(False)
+
+    # Update octave label colors
+    for octave, t in oct_labels.items():
+        t.set_color(ACCENT if octave == base_oct else '#3a4a5a')
+
+    # Reposition active-octave underline
     for k in keys:
         if k['note'] == 'C' and k['octave'] == base_oct:
-            ax.plot([k['x'] + 0.1, k['x'] + 6.9], [-0.03, -0.03],
-                    color=ACCENT, lw=1.2, alpha=0.7, zorder=4,
-                    solid_capstyle='round')
+            underline.set_xdata([k['x'] + 0.1, k['x'] + 6.9])
+            underline.set_visible(True)
             break
+    else:
+        underline.set_visible(False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Note slot drawing — persistent Text artists (no ax.clear() on each update)
@@ -633,6 +668,7 @@ def main():
     _curve_lc = _init_curve_ax(ax_main)
 
     ax_piano = fig.add_axes([0.010,   PIANO_Y, 0.980,   PIANO_H])
+    _piano_arts = _init_piano_ax(ax_piano, piano_keys)
 
     # Note slot axes: 0=Note1(X), 1=Note2(X), 2=Note3(Y), 3=Note4(Y)
     ax_slots = [
@@ -661,7 +697,7 @@ def main():
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
                for i in range(n_temp)]
 
-    for ax in ([ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
+    for ax in ([ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
                 ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
                + btn_axs):
         ax.set_facecolor(BG)
@@ -753,7 +789,7 @@ def main():
 
     def full_redraw():
         redraw_slots()
-        draw_piano(ax_piano, piano_keys, state)
+        update_piano(_piano_arts, piano_keys, state)
         refresh()
         if _audio_engine._on:
             _audio_engine.set_freqs(
@@ -799,13 +835,13 @@ def main():
 
         if key == '[':
             state['base_octave'] = max(PIANO_OCT_LOW, state['base_octave'] - 1)
-            draw_piano(ax_piano, piano_keys, state)
+            update_piano(_piano_arts, piano_keys, state)
             fig.canvas.draw_idle()
             return
 
         if key == ']':
             state['base_octave'] = min(PIANO_OCT_HIGH - 1, state['base_octave'] + 1)
-            draw_piano(ax_piano, piano_keys, state)
+            update_piano(_piano_arts, piano_keys, state)
             fig.canvas.draw_idle()
             return
 
