@@ -19,6 +19,7 @@ key labels appear on the piano keys).
 
 import queue as _queue
 import threading
+import multiprocessing as _mp
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -618,7 +619,50 @@ class _AudioEngine:
             self._stream = None
 
 
-_audio_engine = _AudioEngine()
+def _audio_process_main(cmd_q):
+    """Subprocess entry point: owns the AudioEngine in its own GIL."""
+    engine = _AudioEngine()
+    while True:
+        try:
+            msg = cmd_q.get(timeout=0.5)
+        except Exception:
+            continue
+        op = msg[0]
+        if   op == 'enable':     engine.enable(msg[1])
+        elif op == 'disable':    engine.disable()
+        elif op == 'set_freqs':  engine.set_freqs(msg[1])
+        elif op == 'set_tone':   engine.set_tone(msg[1])
+        elif op == 'set_volume': engine.set_volume(msg[1])
+        elif op == 'close':      engine.close(); return
+
+
+class _AudioProxy:
+    """Sends commands to the audio subprocess; mirrors _AudioEngine's API."""
+
+    def __init__(self, q):
+        self._q  = q
+        self._on = False   # mirrored locally so the UI can query it
+
+    def enable(self, freqs):
+        self._on = True
+        self._q.put(('enable', list(freqs)))
+
+    def disable(self):
+        self._on = False
+        self._q.put(('disable',))
+
+    def set_freqs(self, freqs):
+        self._q.put(('set_freqs', list(freqs)))
+
+    def set_tone(self, tone):
+        self._q.put(('set_tone', tone))
+
+    def set_volume(self, v):
+        self._q.put(('set_volume', float(v)))
+
+    def close(self):
+        self._on = False
+        self._q.put(('close',))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
@@ -644,6 +688,13 @@ def main():
     }
 
     piano_keys = _build_piano_keys()
+
+    # ── Audio subprocess ───────────────────────────────────────────────────────
+    _audio_q    = _mp.Queue()
+    _audio_proc = _mp.Process(target=_audio_process_main,
+                              args=(_audio_q,), daemon=True)
+    _audio_proc.start()
+    _audio_engine = _AudioProxy(_audio_q)
 
     fig = plt.figure(figsize=(14, 7.75), facecolor=BG)
     fig.suptitle('4-note Lissajous Curve',
