@@ -22,6 +22,8 @@ import threading
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
+from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider, Button
 from fractions import Fraction
 from math import gcd, lcm
@@ -93,8 +95,8 @@ TEMPERAMENTS = {
                          3/2, 8/5, 5/3, 9/5, 15/8],
     'Pythagorean':      [_pyth(n)          for n in _F5],
     '¼-Comma Meantone': [_mt(n)            for n in _F5],
-    'Werckmeister III': [2 ** (c / 1200)   for c in _W3],
-    'Kirnberger III':   [2 ** (c / 1200)   for c in _K3],
+    'Well temperament (1691)': [2 ** (c / 1200)   for c in _W3],
+    'Well temperament (c. 1779)':   [2 ** (c / 1200)   for c in _K3],
 }
 
 TEMP_NAMES = list(TEMPERAMENTS.keys())
@@ -112,11 +114,11 @@ TEMP_DESCRIPTIONS = {
     '¼-Comma Meantone':
         'Narrows each 5th by ¼ syntonic comma so four 5ths = exact 5/4.  '
         'Sweet major 3rds; a "wolf" 5th on G#–Eb.',
-    'Werckmeister III':
-        'Well temperament (1691): four 5ths narrow by ¼ Pythagorean comma.  '
+    'Well temperament (1691)':
+        'Werckmeister III: four 5ths narrow by ¼ Pythagorean comma.  '
         'All 12 keys usable; "home" keys sound purer and warmer.',
-    'Kirnberger III':
-        'Well temperament (c. 1779): C–E pure (5/4); gentle gradation.  '
+    'Well temperament (c. 1779)':
+        'Kirnberger III: C–E pure (5/4); gentle gradation.  '
         'Smooth in flat keys; brighter toward sharps.',
 }
 
@@ -206,13 +208,15 @@ def draw_curve(ax, freqs, phi_x, phi_xy, labels, temperament):
         ax.axhline(v, color=DIM, lw=0.3, alpha=0.6)
         ax.axvline(v, color=DIM, lw=0.3, alpha=0.6)
 
-    segs    = 80
-    seg_len = len(x) // segs
-    for i in range(segs):
-        s = slice(i * seg_len, (i + 1) * seg_len + 1)
-        ax.plot(x[s], y[s], color=CURVE_COL,
-                lw=0.9, alpha=0.15 + 0.85 * (i / segs),
-                solid_capstyle='round')
+    pts    = np.stack([x, y], axis=1)[:, np.newaxis, :]          # (N, 1, 2)
+    segs   = np.concatenate([pts[:-1], pts[1:]], axis=1)         # (N-1, 2, 2)
+    n_seg  = len(segs)
+    r, g, b = mcolors.to_rgb(CURVE_COL)
+    alphas = np.linspace(0.15, 1.0, n_seg)
+    colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
+                               np.full(n_seg, b), alphas])
+    ax.add_collection(LineCollection(segs, colors=colors,
+                                     linewidths=0.9, capstyle='round'))
 
     ax.set_xlim(-1.15, 1.15)
     ax.set_ylim(-1.15, 1.15)
@@ -229,8 +233,7 @@ def draw_curve(ax, freqs, phi_x, phi_xy, labels, temperament):
         f'{labels[2]} ({f3:.1f} Hz) + {labels[3]} ({f4:.1f} Hz)   [{ry}{iy_s}]',
         color=Y_COL, fontsize=9, labelpad=5, rotation=90)
     ax.set_title(
-        f'{temperament}   ·   '
-        f'X = {labels[0]} + {labels[1]}   ·   Y = {labels[2]} + {labels[3]}',
+        f'{temperament}',
         color=WHITE, fontsize=10, pad=10)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -598,19 +601,19 @@ def main():
 
     piano_keys = _build_piano_keys()
 
-    fig = plt.figure(figsize=(16, 10), facecolor=BG)
-    fig.suptitle('Lissajous Curve  ·  Four Musical Notes  ·  Piano Keyboard',
+    fig = plt.figure(figsize=(14, 7.75), facecolor=BG)
+    fig.suptitle('4-note Lissajous Curve',
                  color=WHITE, fontsize=13, fontweight='bold', y=0.997)
 
     temp_desc = fig.text(
-        0.50, 0.975, TEMP_DESCRIPTIONS[state['temp']],
+        0.50, 0.02, TEMP_DESCRIPTIONS[state['temp']],
         ha='center', va='top', color='#7a8fa8', fontsize=8, style='italic')
 
     # ── Layout ────────────────────────────────────────────────────────────────
-    TEMP_Y,  TEMP_H  = 0.010, 0.055
+    TEMP_Y,  TEMP_H  = 0.03, 0.03
     PHASE_Y, PHASE_H = 0.082, 0.046
-    PIANO_Y, PIANO_H = 0.147, 0.100
-    AUDIO_Y, AUDIO_H = 0.295, 0.028   # audio controls strip between piano and graph
+    PIANO_Y, PIANO_H = 0.147, 0.140
+    AUDIO_Y, AUDIO_H = 0.090, 0.028   # audio controls strip between phase sliders
     MAIN_X,  MAIN_Y  = 0.140, 0.330   # raised slightly to clear audio strip
     MAIN_W,  MAIN_H  = 0.720, 0.600   # keep top at 0.930
     SLOT_X_L, SLOT_X_R, SLOT_W = 0.010, 0.875, 0.110
@@ -630,16 +633,16 @@ def main():
 
     _ANIM_W = 0.055
     ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
-    ax_px       = fig.add_axes([0.090,  PHASE_Y, 0.330,   PHASE_H])
-    ax_pxy      = fig.add_axes([0.580,  PHASE_Y, 0.330,   PHASE_H])
+    ax_px       = fig.add_axes([0.130,  PHASE_Y, 0.100,   PHASE_H])
+    ax_pxy      = fig.add_axes([0.790,  PHASE_Y, 0.100,   PHASE_H])
     ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
 
     # Audio controls strip
-    ax_aud_on   = fig.add_axes([0.010, AUDIO_Y, 0.075, AUDIO_H])
-    ax_aud_sine = fig.add_axes([0.092, AUDIO_Y, 0.080, AUDIO_H])
-    ax_aud_ep   = fig.add_axes([0.177, AUDIO_Y, 0.095, AUDIO_H])
-    ax_aud_pno  = fig.add_axes([0.277, AUDIO_Y, 0.080, AUDIO_H])
-    ax_vol      = fig.add_axes([0.368, AUDIO_Y, 0.622, AUDIO_H])
+    ax_aud_on   = fig.add_axes([0.310, AUDIO_Y, 0.05, AUDIO_H])
+    ax_aud_sine = fig.add_axes([0.365, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_ep   = fig.add_axes([0.420, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_pno  = fig.add_axes([0.475, AUDIO_Y, 0.050, AUDIO_H])
+    ax_vol      = fig.add_axes([0.545, AUDIO_Y, 0.100, AUDIO_H])
 
     n_temp  = len(TEMP_NAMES)
     btn_w   = 0.98 / n_temp
@@ -659,10 +662,14 @@ def main():
     fig.text(0.50, TEMP_Y + TEMP_H + 0.005, 'T E M P E R A M E N T',
              ha='center', va='bottom', color='#556677',
              fontsize=7.5, fontweight='bold')
+    fig.text(0.50, PIANO_Y + PIANO_H + 0.003,                                     
+           'Click a key  ·  A–J = C–B (home oct)  ·  K,O,L,P = next oct  ·  '   
+           '[ ] shift octave  ·  1–4 / Tab select slot',                        
+           ha='center', va='bottom', color='#7a8fa8', fontsize=7) 
     # Phase sliders
-    sl_px  = Slider(ax_px,  'φ inner X', 0, 2 * np.pi,
+    sl_px  = Slider(ax_px,  'φ inner X ', 0, 2 * np.pi,
                     valinit=state['phi_x'],  color='#996633')
-    sl_pxy = Slider(ax_pxy, 'φ X vs Y',  0, 2 * np.pi,
+    sl_pxy = Slider(ax_pxy, 'φ X vs Y ',  0, 2 * np.pi,
                     valinit=state['phi_xy'], color='#664499')
     for sl in (sl_px, sl_pxy):
         sl.label.set_color(WHITE)
