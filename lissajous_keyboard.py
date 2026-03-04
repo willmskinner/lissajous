@@ -191,36 +191,15 @@ PIANO_BLACK  = '#1c1c2c'
 PIANO_BORDER = '#111122'
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Curve drawing
+# Curve drawing — persistent LineCollection (no ax.clear() on each frame)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def draw_curve(ax, freqs, phi_x, phi_xy, labels, temperament):
-    f1, f2, f3, f4 = freqs
-    x, y = lissajous_4(freqs, phi_x, phi_xy)
-    rx, ix = describe_ratio(f1, f2)
-    ry, iy = describe_ratio(f3, f4)
-    ix_s = f' – {ix}' if ix else ''
-    iy_s = f' – {iy}' if iy else ''
-
-    ax.clear()
+def _init_curve_ax(ax):
+    """Set up ax_main once: static decorations + persistent LineCollection."""
     ax.set_facecolor(BG)
     for v in [-1, -0.5, 0, 0.5, 1]:
         ax.axhline(v, color=DIM, lw=0.3, alpha=0.6)
         ax.axvline(v, color=DIM, lw=0.3, alpha=0.6)
-
-    # One segment per point pair with capstyle='butt': flat ends tile seamlessly
-    # regardless of segment length, eliminating dotting on both simple and
-    # complex curves.  Round caps extended beyond endpoints — that was the cause.
-    pts    = np.stack([x, y], axis=1)[:, np.newaxis, :]
-    segs   = np.concatenate([pts[:-1], pts[1:]], axis=1)
-    n_seg  = len(segs)
-    r, g, b = mcolors.to_rgb(CURVE_COL)
-    alphas = np.linspace(0.15, 1.0, n_seg)
-    colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
-                               np.full(n_seg, b), alphas])
-    ax.add_collection(LineCollection(segs, colors=colors,
-                                     linewidths=0.9, capstyle='butt'))
-
     ax.set_xlim(-1.15, 1.15)
     ax.set_ylim(-1.15, 1.15)
     ax.set_aspect('equal')
@@ -228,16 +207,39 @@ def draw_curve(ax, freqs, phi_x, phi_xy, labels, temperament):
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_color(DIM)
+    ax.set_xlabel('', color=X_COL, fontsize=9, labelpad=5)
+    ax.set_ylabel('', color=Y_COL, fontsize=9, labelpad=5, rotation=90)
+    ax.set_title('', color=WHITE, fontsize=10, pad=10)
+    lc = LineCollection([], linewidths=0.9, capstyle='butt')
+    ax.add_collection(lc)
+    return lc
 
+
+def _update_curve(lc, ax, freqs, phi_x, phi_xy, labels, temperament):
+    """Update the persistent LineCollection and axis labels in-place."""
+    f1, f2, f3, f4 = freqs
+    x, y  = lissajous_4(freqs, phi_x, phi_xy)
+    pts   = np.stack([x, y], axis=1)[:, np.newaxis, :]
+    segs  = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    n_seg = len(segs)
+    r, g, b = mcolors.to_rgb(CURVE_COL)
+    alphas = np.linspace(0.15, 1.0, n_seg)
+    colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
+                               np.full(n_seg, b), alphas])
+    lc.set_segments(segs)
+    lc.set_color(colors)
+
+    rx, ix = describe_ratio(f1, f2)
+    ry, iy = describe_ratio(f3, f4)
+    ix_s = f' – {ix}' if ix else ''
+    iy_s = f' – {iy}' if iy else ''
     ax.set_xlabel(
         f'{labels[0]} ({f1:.1f} Hz) + {labels[1]} ({f2:.1f} Hz)   [{rx}{ix_s}]',
         color=X_COL, fontsize=9, labelpad=5)
     ax.set_ylabel(
         f'{labels[2]} ({f3:.1f} Hz) + {labels[3]} ({f4:.1f} Hz)   [{ry}{iy_s}]',
         color=Y_COL, fontsize=9, labelpad=5, rotation=90)
-    ax.set_title(
-        f'{temperament}',
-        color=WHITE, fontsize=10, pad=10)
+    ax.set_title(f'{temperament}', color=WHITE, fontsize=10, pad=10)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Temperament button styling
@@ -390,60 +392,64 @@ def draw_piano(ax, keys, state):
             break
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Note slot drawing
+# Note slot drawing — persistent Text artists (no ax.clear() on each update)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def draw_slot(ax, slot_idx, state):
-    note    = state['notes'][slot_idx]
-    octave  = state['octs'][slot_idx]
-    col     = NOTE_COLS[slot_idx]
-    is_act  = (state['active_slot'] == slot_idx)
-    ax_lbl  = 'X  AXIS' if slot_idx < 2 else 'Y  AXIS'
-    ax_col  = X_COL    if slot_idx < 2 else Y_COL
-
-    ax.clear()
+def _init_slot_ax(ax, slot_idx):
+    """Set up a slot axis once; return dict of persistent Text artists."""
+    ax_lbl = 'X  AXIS' if slot_idx < 2 else 'Y  AXIS'
+    ax_col = X_COL    if slot_idx < 2 else Y_COL
     ax.set_facecolor('#070813')
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
+    return {
+        'title':  ax.text(0.5, 0.90, f'Note {slot_idx + 1}',
+                          ha='center', va='center',
+                          fontsize=7.5, fontweight='bold',
+                          transform=ax.transAxes),
+        'axis':   ax.text(0.5, 0.79, ax_lbl,
+                          ha='center', va='center',
+                          color=ax_col, fontsize=6.5,
+                          transform=ax.transAxes),
+        'note':   ax.text(0.5, 0.54, '',
+                          ha='center', va='center',
+                          fontsize=20, fontweight='bold',
+                          transform=ax.transAxes),
+        'freq':   ax.text(0.5, 0.35, '',
+                          ha='center', va='center',
+                          color='#4a5a6a', fontsize=8,
+                          transform=ax.transAxes),
+        'status': ax.text(0.5, 0.16, '',
+                          ha='center', va='center',
+                          fontsize=7, fontweight='bold',
+                          transform=ax.transAxes),
+    }
+
+
+def draw_slot(ax, slot_idx, state, arts):
+    note   = state['notes'][slot_idx]
+    octave = state['octs'][slot_idx]
+    col    = NOTE_COLS[slot_idx]
+    is_act = (state['active_slot'] == slot_idx)
 
     for sp in ax.spines.values():
         sp.set_edgecolor(col)
         sp.set_linewidth(2.5 if is_act else 0.8)
 
-    ax.text(0.5, 0.90, f'Note {slot_idx + 1}',
-            ha='center', va='center',
-            color=col if is_act else '#445566',
-            fontsize=7.5, fontweight='bold',
-            transform=ax.transAxes)
-
-    ax.text(0.5, 0.79, ax_lbl,
-            ha='center', va='center',
-            color=ax_col, fontsize=6.5,
-            transform=ax.transAxes)
-
-    ax.text(0.5, 0.54, f'{note}{octave}',
-            ha='center', va='center',
-            color=col, fontsize=20, fontweight='bold',
-            transform=ax.transAxes)
-
-    freq = note_freq(note, octave, state['temp'])
-    ax.text(0.5, 0.35, f'{freq:.1f} Hz',
-            ha='center', va='center',
-            color='#4a5a6a', fontsize=8,
-            transform=ax.transAxes)
-
+    arts['title'].set_color(col if is_act else '#445566')
+    arts['note'].set_text(f'{note}{octave}')
+    arts['note'].set_color(col)
+    arts['freq'].set_text(f'{note_freq(note, octave, state["temp"]):.1f} Hz')
     if is_act:
-        ax.text(0.5, 0.16, '▲  ACTIVE',
-                ha='center', va='center',
-                color=col, fontsize=7, fontweight='bold',
-                transform=ax.transAxes)
+        arts['status'].set_text('▲  ACTIVE')
+        arts['status'].set_color(col)
+        arts['status'].set_fontsize(7)
     else:
-        ax.text(0.5, 0.16, f'press  {slot_idx + 1}',
-                ha='center', va='center',
-                color='#2a3a4a', fontsize=6.5,
-                transform=ax.transAxes)
+        arts['status'].set_text(f'press  {slot_idx + 1}')
+        arts['status'].set_color('#2a3a4a')
+        arts['status'].set_fontsize(6.5)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MIDI background worker
@@ -624,6 +630,8 @@ def main():
     SLOT_Y_BOT, SLOT_H_BOT = 0.330, 0.280
 
     ax_main  = fig.add_axes([MAIN_X,  MAIN_Y,  MAIN_W,  MAIN_H])
+    _curve_lc = _init_curve_ax(ax_main)
+
     ax_piano = fig.add_axes([0.010,   PIANO_Y, 0.980,   PIANO_H])
 
     # Note slot axes: 0=Note1(X), 1=Note2(X), 2=Note3(Y), 3=Note4(Y)
@@ -633,6 +641,7 @@ def main():
         fig.add_axes([SLOT_X_R, SLOT_Y_TOP, SLOT_W, SLOT_H_TOP]),
         fig.add_axes([SLOT_X_R, SLOT_Y_BOT, SLOT_W, SLOT_H_BOT]),
     ]
+    _slot_arts = [_init_slot_ax(ax_slots[i], i) for i in range(4)]
 
     _ANIM_W = 0.055
     ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
@@ -652,8 +661,8 @@ def main():
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
                for i in range(n_temp)]
 
-    for ax in (ax_slots + [ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
-                           ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
+    for ax in ([ax_piano, ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
+                ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
                + btn_axs):
         ax.set_facecolor(BG)
 
@@ -732,14 +741,14 @@ def main():
 
     def redraw_slots():
         for i in range(4):
-            draw_slot(ax_slots[i], i, state)
+            draw_slot(ax_slots[i], i, state, _slot_arts[i])
 
     def refresh(_=None):
         freqs  = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
                   for i in range(4)]
         labels = [f'{state["notes"][i]}{state["octs"][i]}' for i in range(4)]
-        draw_curve(ax_main, freqs, state['phi_x'], state['phi_xy'],
-                   labels, state['temp'])
+        _update_curve(_curve_lc, ax_main, freqs,
+                      state['phi_x'], state['phi_xy'], labels, state['temp'])
         fig.canvas.draw_idle()
 
     def full_redraw():
