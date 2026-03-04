@@ -157,7 +157,7 @@ def _period(freqs, max_denom=24, cap=96):
     return min(lcm_n / gcd_d, cap)
 
 
-def lissajous_4(freqs, phi_x, phi_xy, n=8000):
+def lissajous_4(freqs, phi_x, phi_xy, n=2000):
     f_min = min(freqs)
     r  = [f / f_min for f in freqs]
     T  = _period(freqs)
@@ -218,7 +218,7 @@ def _init_curve_ax(ax):
     ax.set_title('', color=WHITE, fontsize=10, pad=10)
 
     # Pre-compute the gradient color array — identical every frame
-    n_seg  = 8000 - 1
+    n_seg  = 2000 - 1
     r, g, b = mcolors.to_rgb(CURVE_COL)
     alphas = np.linspace(0.15, 1.0, n_seg)
     colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
