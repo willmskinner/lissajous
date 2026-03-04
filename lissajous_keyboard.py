@@ -525,47 +525,27 @@ def _midi_worker(q, port_name):
 _AUDIO_SR    = 44100
 _AUDIO_BLOCK = 2048
 
-# Harmonic series: list of (harmonic_number, amplitude)
-# Amplitudes are normalised so the loudest tone ≈ 1.0 before soft-clip.
+# Harmonic series for each tone type: list of (harmonic_number, amplitude)
 _TONE_HARMONICS = {
     'sine':   [(1, 1.000)],
-    # Rhodes tine: strong 2nd harmonic gives the characteristic bell/bark.
-    # Odd harmonics add growl; rapid rolloff above 5th.
-    'epiano': [(1, 0.480), (2, 0.420), (3, 0.110), (4, 0.050), (5, 0.018)],
-    # Piano: dense harmonic series, rolled off gradually.
-    # 10 partials capture the brightness without excessive CPU.
-    'piano':  [(1, 0.280), (2, 0.240), (3, 0.190), (4, 0.145), (5, 0.105),
-               (6, 0.072), (7, 0.048), (8, 0.030), (9, 0.018), (10, 0.010)],
+    'epiano': [(1, 0.600), (2, 0.280), (3, 0.080), (4, 0.020)],
+    'piano':  [(1, 0.380), (2, 0.220), (3, 0.140), (4, 0.090),
+               (5, 0.055), (6, 0.035), (7, 0.020), (8, 0.012)],
 }
-
-# Inharmonicity coefficient B per tone.
-# Real strings/tines are slightly stiff → partial n sits at
-#   f_n = n * f0 * sqrt(1 + B * n²)
-# Piano strings: B ≈ 0.0001 at A4.  Rhodes tines: smaller (~0.00005).
-_TONE_INHARMONICITY = {
-    'sine':   0.0,
-    'epiano': 0.00005,
-    'piano':  0.00010,
-}
-
-_MAX_HARMONICS = 10   # largest harmonic count across all tones
 
 
 class _AudioEngine:
     """Real-time additive synthesis engine for four simultaneous notes."""
 
     def __init__(self):
-        self._sr         = _AUDIO_SR
-        self._freqs      = np.ones(4) * 440.0
-        # Per-harmonic phase accumulators: shape (4 notes, _MAX_HARMONICS)
-        # Needed for correct inharmonic partial phases across blocks.
-        self._hphases    = np.zeros((4, _MAX_HARMONICS))
-        self._tphase     = 0.0           # tremolo phase (e-piano)
-        self._tone       = 'sine'
-        self._vol        = 0.25
-        self._on         = False
-        self._lock       = threading.Lock()
-        self._stream     = None
+        self._sr     = _AUDIO_SR
+        self._freqs  = np.ones(4) * 440.0
+        self._phases = np.zeros(4)   # phase accumulator per note
+        self._tone   = 'sine'
+        self._vol    = 0.25
+        self._on     = False
+        self._lock   = threading.Lock()
+        self._stream = None
 
     def set_freqs(self, freqs):
         with self._lock:
@@ -581,40 +561,27 @@ class _AudioEngine:
 
     def _callback(self, outdata, frames, _time, _status):
         with self._lock:
-            freqs   = self._freqs.copy()
-            hphases = self._hphases.copy()
-            tphase  = self._tphase
-            tone    = self._tone
-            vol     = self._vol
-            on      = self._on
+            freqs  = self._freqs.copy()
+            phases = self._phases.copy()
+            tone   = self._tone
+            vol    = self._vol
+            on     = self._on
 
         n          = frames
         idx        = np.arange(n, dtype=np.float64)
         out        = np.zeros(n)
         harmonics  = _TONE_HARMONICS.get(tone, _TONE_HARMONICS['sine'])
-        B          = _TONE_INHARMONICITY.get(tone, 0.0)
-        new_hp     = hphases.copy()
+        new_phases = phases.copy()
 
         for i in range(4):
             f   = freqs[i]
+            dp  = 2.0 * np.pi * f / self._sr
+            phi = phases[i] + dp * idx
             sig = np.zeros(n)
-            for j, (h, amp) in enumerate(harmonics):
-                # Inharmonic partial frequency: f_h = h·f·√(1 + B·h²)
-                f_h  = f * h * np.sqrt(1.0 + B * h * h)
-                dp_h = 2.0 * np.pi * f_h / self._sr
-                phi  = hphases[i, j] + dp_h * idx
-                sig += amp * np.sin(phi)
-                new_hp[i, j] = (hphases[i, j] + dp_h * n) % (2.0 * np.pi)
+            for h, amp in harmonics:
+                sig += amp * np.sin(h * phi)
             out += sig
-
-        # E-piano tremolo: 4.5 Hz, 20% depth — closer to real Rhodes amp tremolo
-        if tone == 'epiano':
-            tdp    = 2.0 * np.pi * 4.5 / self._sr
-            trem   = 1.0 + 0.20 * np.sin(tphase + tdp * idx)
-            out   *= trem
-            new_tp = (tphase + tdp * n) % (2.0 * np.pi)
-        else:
-            new_tp = tphase
+            new_phases[i] = (phases[i] + dp * n) % (2.0 * np.pi)
 
         if not on:
             out[:] = 0.0
@@ -625,8 +592,7 @@ class _AudioEngine:
             outdata[:, 1] = mono
 
         with self._lock:
-            self._hphases = new_hp
-            self._tphase  = new_tp
+            self._phases = new_phases
 
     def enable(self, freqs):
         with self._lock:
