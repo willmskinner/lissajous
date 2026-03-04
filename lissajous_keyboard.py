@@ -208,17 +208,18 @@ def draw_curve(ax, freqs, phi_x, phi_xy, labels, temperament):
         ax.axhline(v, color=DIM, lw=0.3, alpha=0.6)
         ax.axvline(v, color=DIM, lw=0.3, alpha=0.6)
 
-    # 200 grouped segments — each spans enough points to render as a solid line
-    # even on complex curves where individual point pairs are sub-pixel apart.
-    n_segs  = 200
-    pts     = np.stack([x, y], axis=1)
-    seg_len = max(1, len(pts) // n_segs)
-    segs    = [pts[i * seg_len : (i + 1) * seg_len + 1] for i in range(n_segs)]
+    # One segment per point pair with capstyle='butt': flat ends tile seamlessly
+    # regardless of segment length, eliminating dotting on both simple and
+    # complex curves.  Round caps extended beyond endpoints — that was the cause.
+    pts    = np.stack([x, y], axis=1)[:, np.newaxis, :]
+    segs   = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    n_seg  = len(segs)
     r, g, b = mcolors.to_rgb(CURVE_COL)
-    alphas  = np.linspace(0.15, 1.0, n_segs)
-    colors  = [(r, g, b, a) for a in alphas]
+    alphas = np.linspace(0.15, 1.0, n_seg)
+    colors = np.column_stack([np.full(n_seg, r), np.full(n_seg, g),
+                               np.full(n_seg, b), alphas])
     ax.add_collection(LineCollection(segs, colors=colors,
-                                     linewidths=0.9, capstyle='round'))
+                                     linewidths=0.9, capstyle='butt'))
 
     ax.set_xlim(-1.15, 1.15)
     ax.set_ylim(-1.15, 1.15)
