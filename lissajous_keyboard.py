@@ -374,7 +374,7 @@ def _init_piano_ax(ax, keys):
                 ha='center', va='center', fontsize=6.5, color='#3a4a5a', zorder=3)
 
     # Active-octave underline — single Line2D, repositioned on octave shift
-    underline, = ax.plot([], [-0.03, -0.03],
+    underline, = ax.plot([0, 0], [-0.03, -0.03],
                          color=ACCENT, lw=1.2, alpha=0.7, zorder=4,
                          solid_capstyle='round', visible=False)
 
