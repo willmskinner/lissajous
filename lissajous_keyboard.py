@@ -528,6 +528,8 @@ _AUDIO_BLOCK = 2048
 # Harmonic series for each tone type: list of (harmonic_number, amplitude)
 _TONE_HARMONICS = {
     'sine':   [(1, 1.000)],
+    'square': [(1, 1.000), (3, 0.333), (5, 0.200), (7, 0.143),
+               (9, 0.111), (11, 0.091)],   # odd harmonics only: 1/h series
     'epiano': [(1, 0.600), (2, 0.280), (3, 0.080), (4, 0.020)],
     'piano':  [(1, 0.380), (2, 0.220), (3, 0.140), (4, 0.090),
                (5, 0.055), (6, 0.035), (7, 0.020), (8, 0.012)],
@@ -742,11 +744,12 @@ def main():
     ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
 
     # Audio controls strip
-    ax_aud_on   = fig.add_axes([0.310, AUDIO_Y, 0.05, AUDIO_H])
-    ax_aud_sine = fig.add_axes([0.365, AUDIO_Y, 0.050, AUDIO_H])
-    ax_aud_ep   = fig.add_axes([0.420, AUDIO_Y, 0.050, AUDIO_H])
-    ax_aud_pno  = fig.add_axes([0.475, AUDIO_Y, 0.050, AUDIO_H])
-    ax_vol      = fig.add_axes([0.545, AUDIO_Y, 0.100, AUDIO_H])
+    ax_aud_on   = fig.add_axes([0.318, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_sine = fig.add_axes([0.373, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_sqr  = fig.add_axes([0.428, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_ep   = fig.add_axes([0.483, AUDIO_Y, 0.050, AUDIO_H])
+    ax_aud_pno  = fig.add_axes([0.538, AUDIO_Y, 0.050, AUDIO_H])
+    ax_vol      = fig.add_axes([0.603, AUDIO_Y, 0.100, AUDIO_H])
 
     n_temp  = len(TEMP_NAMES)
     btn_w   = 0.98 / n_temp
@@ -754,7 +757,7 @@ def main():
                for i in range(n_temp)]
 
     for ax in ([ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
-                ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
+                ax_aud_on, ax_aud_sine, ax_aud_sqr, ax_aud_ep, ax_aud_pno, ax_vol]
                + btn_axs):
         ax.set_facecolor(BG)
 
@@ -791,17 +794,19 @@ def main():
             sp.set_linewidth(0.5)
 
     # Audio controls
-    _AUDIO_TONE_NAMES = [('sine', 'Sine'), ('epiano', 'E. Piano'), ('piano', 'Piano')]
-    btn_aud_on   = Button(ax_aud_on,   '♪  off', color=BTN_OFF, hovercolor='#162840')
-    btn_aud_sine = Button(ax_aud_sine, 'Sine',    color=BTN_OFF, hovercolor='#162840')
-    btn_aud_ep   = Button(ax_aud_ep,   'E. Piano',color=BTN_OFF, hovercolor='#162840')
-    btn_aud_pno  = Button(ax_aud_pno,  'Piano',   color=BTN_OFF, hovercolor='#162840')
+    _AUDIO_TONE_NAMES = [('sine', 'Sine'), ('square', 'Square'),
+                         ('epiano', 'E. Piano'), ('piano', 'Piano')]
+    btn_aud_on   = Button(ax_aud_on,   '♪  off',   color=BTN_OFF, hovercolor='#162840')
+    btn_aud_sine = Button(ax_aud_sine, 'Sine',      color=BTN_OFF, hovercolor='#162840')
+    btn_aud_sqr  = Button(ax_aud_sqr,  'Square',    color=BTN_OFF, hovercolor='#162840')
+    btn_aud_ep   = Button(ax_aud_ep,   'E. Piano',  color=BTN_OFF, hovercolor='#162840')
+    btn_aud_pno  = Button(ax_aud_pno,  'Piano',     color=BTN_OFF, hovercolor='#162840')
     sl_vol = Slider(ax_vol, 'Vol', 0.0, 1.0, valinit=0.25, color='#2a5a3a')
     sl_vol.label.set_color(WHITE)
     sl_vol.valtext.set_color(WHITE)
 
-    _aud_tone_axs  = [ax_aud_sine, ax_aud_ep, ax_aud_pno]
-    _aud_tone_btns = [btn_aud_sine, btn_aud_ep, btn_aud_pno]
+    _aud_tone_axs  = [ax_aud_sine, ax_aud_sqr, ax_aud_ep, ax_aud_pno]
+    _aud_tone_btns = [btn_aud_sine, btn_aud_sqr, btn_aud_ep, btn_aud_pno]
 
     def _style_aud_tone(active_key):
         for (key, _), ax, btn in zip(_AUDIO_TONE_NAMES, _aud_tone_axs, _aud_tone_btns):
