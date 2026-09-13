@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lissajous Keyboard</title>
+<style>
+  :root {
+    --bg:       #0b0c1e;
+    --white:    #e8eaf0;
+    --dim:      #2a3a4a;
+    --x-col:    #ff9955;
+    --y-col:    #55ccff;
+    --curve:    #00d4ff;
+    --accent:   #00d4ff;
+    --btn-on:   #1c3a5c;
+    --btn-off:  #0f1825;
+    --btn-edge-on:  #00d4ff;
+    --btn-edge-off: #2a3a4a;
+    --pia-white: #dde0e8;
+    --pia-black: #1c1c2c;
+    --pia-border:#111122;
+    --note0: #ff6644;
+    --note1: #ffbb44;
+    --note2: #44ddbb;
+    --note3: #4499ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--white);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body { display: flex; flex-direction: column; align-items: center; padding: 10px 8px 24px; min-height: 100vh; }
+
+  h1 {
+    font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin: 4px 0 10px;
+    text-align: center;
+  }
+
+  .panel { width: 100%; max-width: 980px; }
+
+  /* ---- temperament row ---- */
+  .temp-row { display: flex; gap: 3px; width: 100%; }
+  .temp-btn {
+    flex: 1 1 0; background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off);
+    border-radius: 3px; padding: 5px 2px; font-size: 11px; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .temp-btn.active { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 2px; }
+  .temp-label { text-align: center; font-size: 10px; letter-spacing: 0.15em; color: #556677; font-weight: 700; margin: 5px 0 2px; }
+  .temp-desc { text-align: center; font-size: 11px; font-style: italic; color: #7a8fa8; min-height: 2.6em; margin-bottom: 6px; padding: 0 4px; }
+
+  /* ---- phase / audio controls row ---- */
+  .controls-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+    margin-bottom: 6px;
+  }
+  .phase-ctrl { display: flex; align-items: center; gap: 6px; }
+  .anim-btn {
+    width: 26px; height: 26px; border-radius: 3px; background: var(--btn-off);
+    border: 1px solid var(--btn-edge-off); color: var(--white); font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .anim-btn.on { background: var(--btn-on); border-color: var(--btn-edge-on); border-width: 1.5px; color: var(--accent); }
+  .slider-block { display: flex; flex-direction: column; align-items: center; }
+  .slider-block label { font-size: 10px; color: var(--white); margin-bottom: 1px; }
+  .slider-block input[type=range] { width: 130px; accent-color: #996633; }
+  .slider-block.pxy input[type=range] { accent-color: #664499; }
+
+  .audio-strip { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  .aud-btn {
+    background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off); border-radius: 3px;
+    padding: 5px 8px; font-size: 11px; cursor: pointer;
+  }
+  .aud-btn.on { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 1.5px; }
+  .vol-block { display: flex; flex-direction: column; align-items: center; margin-left: 4px; }
+  .vol-block label { font-size: 10px; }
+  .vol-block input[type=range] { width: 80px; accent-color: #2a5a3a; }
+
+  .midi-status { text-align: center; font-size: 11px; font-style: italic; color: #556677; margin: 4px 0; min-height: 1.4em; }
+
+  /* ---- piano ---- */
+  .piano-hint { text-align: center; font-size: 10.5px; color: #7a8fa8; margin-bottom: 4px; padding: 0 4px; }
+  .piano-scroll { width: 100%; overflow-x: auto; padding-bottom: 4px; }
+  .piano {
+    position: relative; height: 108px; background: var(--bg); border: 1px solid var(--dim);
+    border-radius: 4px; min-width: 640px;
+  }
+  .wkey, .bkey {
+    position: absolute; top: 2%; cursor: pointer; user-select: none;
+  }
+  .wkey {
+    height: 88%; background: var(--pia-white); border: 1px solid var(--pia-border);
+    border-radius: 0 0 3px 3px; z-index: 1;
+  }
+  .bkey {
+    height: 58%; background: var(--pia-black); border: 1px solid #000; border-radius: 0 0 2px 2px; z-index: 2;
+  }
+  .key-shortcut {
+    position: absolute; font-size: 9px; pointer-events: none; transform: translate(-50%, -50%);
+    color: #334455; z-index: 3;
+  }
+  .bkey + .key-shortcut, .key-shortcut.on-black { color: #ccc; font-size: 8.5px; }
+  .oct-label {
+    position: absolute; bottom: -14px; font-size: 9px; color: #3a4a5a; transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .oct-label.active { color: var(--accent); }
+  .oct-underline {
+    position: absolute; bottom: -3px; height: 2px; background: var(--accent); opacity: 0.7;
+    border-radius: 1px; display: none;
+  }
+
+  /* ---- main row: slots + curve ---- */
+  .main-row { display: flex; align-items: stretch; gap: 6px; width: 100%; margin-top: 8px; }
+  .slots-col { display: flex; flex-direction: column; gap: 6px; width: 108px; flex: 0 0 auto; }
+  .slot {
+    flex: 1; background: #070813; border: 1px solid #445566; border-radius: 4px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 6px 2px; cursor: pointer; min-height: 76px; text-align: center;
+  }
+  .slot .s-title { font-size: 10.5px; font-weight: 700; color: #445566; }
+  .slot .s-axis { font-size: 9px; margin-top: 1px; }
+  .slot .s-note { font-size: 22px; font-weight: 700; margin: 3px 0; }
+  .slot .s-freq { font-size: 10px; color: #4a5a6a; }
+  .slot .s-status { font-size: 9px; font-weight: 700; color: #2a3a4a; margin-top: 2px; }
+
+  .curve-wrap { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; min-width: 0; }
+  .curve-title { font-size: 12px; color: var(--white); margin-bottom: 2px; }
+  .curve-mid { display: flex; align-items: center; width: 100%; justify-content: center; }
+  .y-label {
+    writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; color: var(--y-col);
+    margin-right: 4px; white-space: nowrap;
+  }
+  canvas#curve { background: var(--bg); border-radius: 4px; max-width: 100%; }
+  .x-label { font-size: 10px; color: var(--x-col); margin-top: 3px; text-align: center; }
+
+  footer { margin-top: 18px; font-size: 10.5px; color: #556677; text-align: center; }
+  footer a { color: var(--accent); }
+
+  @media (max-width: 720px) {
+    .main-row { flex-direction: column; align-items: center; }
+    .slots-col { flex-direction: row; width: 100%; }
+    canvas#curve { width: 92vw; height: 92vw; }
+  }
+</style>
+</head>
+<body>
+
+<h1>4-NOTE LISSAJOUS CURVE &nbsp;·&nbsp; KEYBOARD INTERFACE</h1>
+
+<div class="panel">
+  <div class="temp-row" id="tempRow"></div>
+  <div class="temp-label">T E M P E R A M E N T</div>
+  <div class="temp-desc" id="tempDesc"></div>
+
+  <div class="controls-row">
+    <div class="phase-ctrl">
+      <button class="anim-btn" id="animPx">&#9654;</button>
+      <div class="slider-block">
+        <label>&phi; inner X</label>
+        <input type="range" id="slPx" min="0" max="6.283185307" step="0.001" value="0">
+      </div>
+    </div>
+
+    <div class="audio-strip">
+      <button class="aud-btn" id="audOn">&#9834; off</button>
+      <button class="aud-btn on" id="audSine">Sine</button>
+      <button class="aud-btn" id="audEp">E. Piano</button>
+      <button class="aud-btn" id="audPno">Piano</button>
+      <div class="vol-block">
+        <label>Vol</label>
+        <input type="range" id="slVol" min="0" max="1" step="0.01" value="0.25">
+      </div>
+    </div>
+
+    <div class="phase-ctrl pxy-ctrl">
+      <div class="slider-block pxy">
+        <label>&phi; X vs Y</label>
+        <input type="range" id="slPxy" min="0" max="6.283185307" step="0.001" value="0.785398163">
+      </div>
+      <button class="anim-btn" id="animPxy">&#9654;</button>
+    </div>
+  </div>
+
+  <div class="midi-status" id="midiStatus"></div>
+
+  <div class="piano-hint">
+    Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp;
+    [ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot
+  </div>
+  <div class="piano-scroll">
+    <div class="piano" id="piano"></div>
+  </div>
+
+  <div class="main-row">
+    <div class="slots-col" id="slotsLeft"></div>
+    <div class="curve-wrap">
+      <div class="curve-title" id="curveTitle"></div>
+      <div class="curve-mid">
+        <div class="y-label" id="yLabel"></div>
+        <canvas id="curve" width="560" height="560"></canvas>
+      </div>
+      <div class="x-label" id="xLabel"></div>
+    </div>
+    <div class="slots-col" id="slotsRight"></div>
+  </div>
+
+  <footer>
+    Web port of the <a href="https://github.com/willmskinner/lissajous-keyboard-interface" target="_blank" rel="noopener">Python original</a>
+    &nbsp;&middot;&nbsp; MIDI &amp; audio require a browser with Web MIDI / Web Audio support (Chrome / Edge recommended)
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
