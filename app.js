@@ -709,6 +709,11 @@ window.addEventListener('keydown', (ev) => {
     updatePiano();
     return;
   }
+  if (key === ' ') {
+    ev.preventDefault();
+    audOnBtn.click();
+    return;
+  }
   if (key in KB_MAP) {
     ev.preventDefault();
     const [semi, octOff] = KB_MAP[key];

@@ -17,6 +17,9 @@
     --btn-off:  #0f1825;
     --btn-edge-on:  #00d4ff;
     --btn-edge-off: #2a3a4a;
+    --orange:       #ff8833;
+    --orange-dim:   #7a4a2a;
+    --orange-bg-on: #4a2410;
     --pia-white: #dde0e8;
     --pia-black: #1c1c2c;
     --pia-border:#111122;
@@ -74,6 +77,10 @@
     padding: 5px 8px; font-size: 11px; cursor: pointer;
   }
   .aud-btn.on { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 1.5px; }
+  #audOn {
+    border-color: var(--orange-dim); color: var(--orange); font-weight: 700; border-width: 1.5px;
+  }
+  #audOn.on { background: var(--orange-bg-on); border-color: var(--orange); border-width: 2px; color: var(--orange); }
   .vol-block { display: flex; flex-direction: column; align-items: center; margin-left: 4px; }
   .vol-block label { font-size: 10px; }
   .vol-block input[type=range] { width: 80px; accent-color: #2a5a3a; }
@@ -188,7 +195,7 @@
 
   <div class="piano-hint">
     Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp;
-    [ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot
+    [ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot &nbsp;&middot;&nbsp; Space = sound on/off
   </div>
   <div class="piano-scroll">
     <div class="piano" id="piano"></div>
