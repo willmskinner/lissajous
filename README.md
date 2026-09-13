@@ -47,6 +47,7 @@ played on it fill the four slots automatically, cycling slot-by-slot.
 | `W` `E` `T` `Y` `U` | C# D# F# G# A# (home octave) |
 | `K` `L` | C D (+1 octave) |
 | `O` `P` | C# D# (+1 octave) |
+| `Space` | Toggle sound on/off |
 
 Additional on-screen controls:
 

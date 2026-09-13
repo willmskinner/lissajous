@@ -15,6 +15,7 @@ key labels appear on the piano keys).
   W E T Y U        C# D# F# G# A#  (home octave)
   K L              C D  (+1 octave)
   O P              C# D#  (+1 octave)
+  Space            toggle sound on/off
 """
 
 import queue as _queue
@@ -187,6 +188,9 @@ BTN_ON       = '#1c3a5c'
 BTN_OFF      = '#0f1825'
 BTN_EDGE_ON  = ACCENT
 BTN_EDGE_OFF = DIM
+ORANGE       = '#ff8833'
+ORANGE_DIM   = '#7a4a2a'
+ORANGE_BG_ON = '#4a2410'
 PIANO_WHITE  = '#dde0e8'
 PIANO_BLACK  = '#1c1c2c'
 PIANO_BORDER = '#111122'
@@ -766,9 +770,9 @@ def main():
     fig.text(0.50, TEMP_Y + TEMP_H + 0.005, 'T E M P E R A M E N T',
              ha='center', va='bottom', color='#556677',
              fontsize=7.5, fontweight='bold')
-    fig.text(0.50, PIANO_Y + PIANO_H + 0.003,                                     
-           'Click a key  ·  A–J = C–B (home oct)  ·  K,O,L,P = next oct  ·  '   
-           '[ ] shift octave  ·  1–4 / Tab select slot',                        
+    fig.text(0.50, PIANO_Y + PIANO_H + 0.003,
+           'Click a key  ·  A–J = C–B (home oct)  ·  K,O,L,P = next oct  ·  '
+           '[ ] shift octave  ·  1–4 / Tab select slot  ·  Space = sound on/off',
            ha='center', va='bottom', color='#7a8fa8', fontsize=7) 
     # Phase sliders
     sl_px  = Slider(ax_px,  'φ inner X ', 0, 2 * np.pi,
@@ -812,13 +816,19 @@ def main():
                 sp.set_linewidth(1.4 if on else 0.5)
             btn.label.set_color(WHITE if on else '#778899')
 
-    for ax in _aud_tone_axs + [ax_aud_on]:
+    for ax in _aud_tone_axs:
         for sp in ax.spines.values():
             sp.set_edgecolor(BTN_EDGE_OFF)
             sp.set_linewidth(0.5)
-    for btn in _aud_tone_btns + [btn_aud_on]:
+    for sp in ax_aud_on.spines.values():
+        sp.set_edgecolor(ORANGE_DIM)
+        sp.set_linewidth(1.2)
+    for btn in _aud_tone_btns:
         btn.label.set_fontsize(8)
         btn.label.set_color('#778899')
+    btn_aud_on.label.set_fontsize(8.5)
+    btn_aud_on.label.set_fontweight('bold')
+    btn_aud_on.label.set_color(ORANGE)
     _style_aud_tone('sine')   # sine pre-selected
 
     # Temperament buttons
@@ -926,6 +936,10 @@ def main():
             fig.canvas.draw_idle()
             return
 
+        if key == ' ':
+            _toggle_audio(None)
+            return
+
         if key in KB_MAP:
             semi, oct_off = KB_MAP[key]
             note   = NOTE_NAMES[semi]
@@ -976,20 +990,20 @@ def main():
             _audio_engine.disable()
             ax_aud_on.set_facecolor(BTN_OFF)
             for sp in ax_aud_on.spines.values():
-                sp.set_edgecolor(BTN_EDGE_OFF)
-                sp.set_linewidth(0.5)
+                sp.set_edgecolor(ORANGE_DIM)
+                sp.set_linewidth(1.2)
             btn_aud_on.label.set_text('♪  off')
-            btn_aud_on.label.set_color('#778899')
+            btn_aud_on.label.set_color(ORANGE)
         else:
             freqs = [note_freq(state['notes'][i], state['octs'][i], state['temp'])
                      for i in range(4)]
             _audio_engine.enable(freqs)
-            ax_aud_on.set_facecolor(BTN_ON)
+            ax_aud_on.set_facecolor(ORANGE_BG_ON)
             for sp in ax_aud_on.spines.values():
-                sp.set_edgecolor(BTN_EDGE_ON)
-                sp.set_linewidth(1.4)
+                sp.set_edgecolor(ORANGE)
+                sp.set_linewidth(2.0)
             btn_aud_on.label.set_text('♪  on')
-            btn_aud_on.label.set_color(ACCENT)
+            btn_aud_on.label.set_color(ORANGE)
         fig.canvas.draw_idle()
 
     def _make_tone_cb(key):
