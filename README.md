@@ -10,9 +10,6 @@ x(t) = sin(r1·t)  +  sin(r2·t + φx)
 y(t) = sin(r3·t + φxy)  +  sin(r4·t + φxy)
 ```
 
-This is a keyboard/MIDI-driven companion to the slider-based
-[`lissajous.py`](../lissajous.py) visualizer in the parent project.
-
 ## Requirements
 
 - Python 3.9+
