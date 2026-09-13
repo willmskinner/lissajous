@@ -16,17 +16,28 @@ key labels appear on the piano keys).
   K L              C D  (+1 octave)
   O P              C# D#  (+1 octave)
   Space            toggle sound on/off
+
+Presets — save a curve you like (notes, octaves, phase, temperament) to a
+local library, browse it with the ◀ ▶ buttons, and export/import it as a
+JSON file to share curves with other users of this app. Saving also drops
+a PNG snapshot of the curve in ~/.lissajous_keyboard/images/, so you can
+browse your saved curves in any image viewer without opening this app.
 """
 
 import queue as _queue
 import threading
 import multiprocessing as _mp
+import json
+import os
+from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 from matplotlib.collections import LineCollection
-from matplotlib.widgets import Slider, Button
+from matplotlib.widgets import Slider, Button, TextBox
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from fractions import Fraction
 from math import gcd, lcm
 try:
@@ -40,6 +51,13 @@ try:
     _SD_OK = True
 except ImportError:
     _SD_OK = False
+
+try:
+    import tkinter
+    from tkinter import filedialog as _filedialog
+    _TK_OK = True
+except Exception:
+    _TK_OK = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Note names & interval labels
@@ -194,6 +212,87 @@ ORANGE_BG_ON = '#4a2410'
 PIANO_WHITE  = '#dde0e8'
 PIANO_BLACK  = '#1c1c2c'
 PIANO_BORDER = '#111122'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Presets — save/export/import curve settings as shareable JSON
+# ─────────────────────────────────────────────────────────────────────────────
+
+PRESETS_FORMAT = 'lissajous-presets-v1'
+PRESETS_DIR    = os.path.expanduser('~/.lissajous_keyboard')
+PRESETS_FILE   = os.path.join(PRESETS_DIR, 'presets.json')
+IMAGES_DIR     = os.path.join(PRESETS_DIR, 'images')
+
+
+def _slugify(name):
+    slug = ''.join(c.lower() if c.isalnum() else '-' for c in name).strip('-')
+    while '--' in slug:
+        slug = slug.replace('--', '-')
+    return slug or 'preset'
+
+
+def render_curve_image(preset, path, size_px=640, dpi=120):
+    """Render a standalone PNG snapshot of a preset's curve — viewable in any
+    image viewer, without opening this app."""
+    freqs = [note_freq(preset['notes'][i], preset['octaves'][i], preset['temperament'])
+             for i in range(4)]
+    x, y = lissajous_4(freqs, preset['phi_x'], preset['phi_xy'])
+
+    fig = Figure(figsize=(size_px / dpi, size_px / dpi), dpi=dpi, facecolor=BG)
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_facecolor(BG)
+    ax.set_xlim(-1.15, 1.15)
+    ax.set_ylim(-1.15, 1.15)
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    n = len(x)
+    xy = np.stack([x, y], axis=1)
+    segs = np.stack([xy[:-1], xy[1:]], axis=1)
+    r, g, b = mcolors.to_rgb(CURVE_COL)
+    alphas = np.linspace(0.15, 1.0, n - 1)
+    colors = np.column_stack([np.full(n - 1, r), np.full(n - 1, g),
+                               np.full(n - 1, b), alphas])
+    lc = LineCollection(segs, linewidths=1.6, capstyle='butt')
+    lc.set_color(colors)
+    ax.add_collection(lc)
+
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    fig.savefig(path, facecolor=BG)
+
+
+def _preset_from_state(state, name):
+    return {
+        'name':        name,
+        'notes':       list(state['notes']),
+        'octaves':     list(state['octs']),
+        'phi_x':       float(state['phi_x']),
+        'phi_xy':      float(state['phi_xy']),
+        'temperament': state['temp'],
+        'created':     datetime.now().isoformat(timespec='seconds'),
+    }
+
+
+def _load_presets(path):
+    """Load a preset library from disk. Returns [] if missing or invalid."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return list(data.get('presets', []))
+    except (OSError, ValueError):
+        return []
+
+
+def _write_presets(path, presets):
+    """Write a preset library to disk, creating parent directories as needed."""
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w') as f:
+        json.dump({'format': PRESETS_FORMAT, 'presets': presets}, f, indent=2)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Curve drawing — persistent LineCollection (no ax.clear() on each frame)
@@ -696,6 +795,9 @@ def main():
         'anim_phi_xy': False,
     }
 
+    presets = _load_presets(PRESETS_FILE)
+    preset_idx = [len(presets) - 1 if presets else -1]  # mutable box (int isn't)
+
     piano_keys = _build_piano_keys()
 
     # ── Audio subprocess ───────────────────────────────────────────────────────
@@ -709,20 +811,22 @@ def main():
     fig.suptitle('4-note Lissajous Curve',
                  color=WHITE, fontsize=13, fontweight='bold', y=0.997)
 
-    temp_desc = fig.text(
-        0.50, 0.02, TEMP_DESCRIPTIONS[state['temp']],
-        ha='center', va='top', color='#7a8fa8', fontsize=8, style='italic')
-
     # ── Layout ────────────────────────────────────────────────────────────────
-    TEMP_Y,  TEMP_H  = 0.03, 0.03
-    PHASE_Y, PHASE_H = 0.082, 0.046
-    PIANO_Y, PIANO_H = 0.147, 0.140
-    AUDIO_Y, AUDIO_H = 0.090, 0.028   # audio controls strip between phase sliders
-    MAIN_X,  MAIN_Y  = 0.140, 0.330   # raised slightly to clear audio strip
-    MAIN_W,  MAIN_H  = 0.720, 0.600   # keep top at 0.930
+    PRESET_Y, PRESET_H = 0.005, 0.028  # preset row: the very bottom of the window
+    TEMP_DESC_Y      = 0.058
+    TEMP_Y,  TEMP_H  = 0.068, 0.03
+    PHASE_Y, PHASE_H = 0.120, 0.046
+    PIANO_Y, PIANO_H = 0.185, 0.140
+    AUDIO_Y, AUDIO_H = 0.128, 0.028   # audio controls strip between phase sliders
+    MAIN_X,  MAIN_Y  = 0.140, 0.368   # lowered slightly to make room for the preset row
+    MAIN_W,  MAIN_H  = 0.720, 0.562   # keep top at 0.930
     SLOT_X_L, SLOT_X_R, SLOT_W = 0.010, 0.875, 0.110
-    SLOT_Y_TOP, SLOT_H_TOP = 0.620, 0.310
-    SLOT_Y_BOT, SLOT_H_BOT = 0.330, 0.280
+    SLOT_Y_TOP, SLOT_H_TOP = 0.640, 0.290
+    SLOT_Y_BOT, SLOT_H_BOT = 0.368, 0.262
+
+    temp_desc = fig.text(
+        0.50, TEMP_DESC_Y, TEMP_DESCRIPTIONS[state['temp']],
+        ha='center', va='top', color='#7a8fa8', fontsize=8, style='italic')
 
     ax_main  = fig.add_axes([MAIN_X,  MAIN_Y,  MAIN_W,  MAIN_H])
     _curve_lc, _segs_buf = _init_curve_ax(ax_main)
@@ -738,6 +842,17 @@ def main():
         fig.add_axes([SLOT_X_R, SLOT_Y_BOT, SLOT_W, SLOT_H_BOT]),
     ]
     _slot_arts = [_init_slot_ax(ax_slots[i], i) for i in range(4)]
+
+    # Preset row: name entry + save/prev/next/delete, then file path + browse/export/import
+    ax_preset_name  = fig.add_axes([0.010, PRESET_Y, 0.100, PRESET_H])
+    ax_preset_save  = fig.add_axes([0.116, PRESET_Y, 0.050, PRESET_H])
+    ax_preset_prev  = fig.add_axes([0.172, PRESET_Y, 0.030, PRESET_H])
+    ax_preset_next  = fig.add_axes([0.384, PRESET_Y, 0.030, PRESET_H])
+    ax_preset_del   = fig.add_axes([0.420, PRESET_Y, 0.055, PRESET_H])
+    ax_preset_path  = fig.add_axes([0.501, PRESET_Y, 0.230, PRESET_H])
+    ax_preset_brow  = fig.add_axes([0.737, PRESET_Y, 0.065, PRESET_H])
+    ax_preset_exp   = fig.add_axes([0.808, PRESET_Y, 0.065, PRESET_H])
+    ax_preset_imp   = fig.add_axes([0.879, PRESET_Y, 0.065, PRESET_H])
 
     _ANIM_W = 0.055
     ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
@@ -758,7 +873,10 @@ def main():
                for i in range(n_temp)]
 
     for ax in ([ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
-                ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol]
+                ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol,
+                ax_preset_name, ax_preset_save, ax_preset_prev, ax_preset_next,
+                ax_preset_del, ax_preset_path, ax_preset_brow, ax_preset_exp,
+                ax_preset_imp]
                + btn_axs):
         ax.set_facecolor(BG)
 
@@ -839,6 +957,55 @@ def main():
         btns.append(btn)
     _style_temp_buttons(btn_axs, btns, 0)
 
+    # Preset controls
+    def _style_preset_button(ax, btn, edge=ACCENT):
+        ax.set_facecolor(BTN_OFF)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(edge)
+            sp.set_linewidth(0.9)
+        btn.label.set_fontsize(8)
+        btn.label.set_color(WHITE)
+
+    def _style_textbox(ax):
+        ax.set_facecolor('#0f1825')
+        for sp in ax.spines.values():
+            sp.set_edgecolor(BTN_EDGE_OFF)
+            sp.set_linewidth(0.8)
+
+    name_box = TextBox(ax_preset_name, '', initial='', textalignment='left')
+    btn_preset_save = Button(ax_preset_save, 'Save', color=BTN_OFF, hovercolor='#162840')
+    btn_preset_prev = Button(ax_preset_prev, '◀', color=BTN_OFF, hovercolor='#162840')
+    btn_preset_next = Button(ax_preset_next, '▶', color=BTN_OFF, hovercolor='#162840')
+    btn_preset_del  = Button(ax_preset_del,  'Delete', color=BTN_OFF, hovercolor='#162840')
+    path_box = TextBox(ax_preset_path, '',
+                        initial=os.path.expanduser('~/lissajous_shared.json'),
+                        textalignment='left')
+    btn_preset_browse = Button(ax_preset_brow, 'Browse…', color=BTN_OFF, hovercolor='#162840')
+    btn_preset_export = Button(ax_preset_exp,  'Export ↑', color=BTN_OFF, hovercolor='#162840')
+    btn_preset_import = Button(ax_preset_imp,  'Import ↓', color=BTN_OFF, hovercolor='#162840')
+
+    for ax in (ax_preset_name, ax_preset_path):
+        _style_textbox(ax)
+    for tb in (name_box, path_box):
+        tb.label.set_color(WHITE)
+        tb.text_disp.set_color(WHITE)
+        tb.text_disp.set_fontsize(8)
+    for ax, btn in ((ax_preset_save, btn_preset_save), (ax_preset_prev, btn_preset_prev),
+                    (ax_preset_next, btn_preset_next), (ax_preset_del, btn_preset_del),
+                    (ax_preset_brow, btn_preset_browse), (ax_preset_exp, btn_preset_export),
+                    (ax_preset_imp, btn_preset_import)):
+        _style_preset_button(ax, btn)
+
+    def _preset_label_text():
+        if not presets:
+            return '(no saved presets)'
+        p = presets[preset_idx[0]]
+        return f'{preset_idx[0] + 1}/{len(presets)}   {p["name"]}'
+
+    preset_label = fig.text(
+        0.293, PRESET_Y + PRESET_H / 2, _preset_label_text(), ha='center', va='center',
+        color='#7a8fa8', fontsize=8, fontweight='bold')
+
     # ── Draw helpers ──────────────────────────────────────────────────────────
 
     def redraw_slots():
@@ -887,6 +1054,169 @@ def main():
         if _audio_engine._on:
             _audio_engine.set_freqs(freqs)
 
+    # ── Preset callbacks ──────────────────────────────────────────────────────
+
+    def _apply_preset(p):
+        state['notes']  = list(p['notes'])
+        state['octs']   = list(p['octaves'])
+        state['phi_x']  = float(p['phi_x'])
+        state['phi_xy'] = float(p['phi_xy'])
+        state['temp']   = p['temperament']
+        sl_px.set_val(state['phi_x'])
+        sl_pxy.set_val(state['phi_xy'])
+        temp_desc.set_text(TEMP_DESCRIPTIONS[state['temp']])
+        _style_temp_buttons(btn_axs, btns, TEMP_NAMES.index(state['temp']))
+        full_redraw()
+
+    def _show_preset_status(msg):
+        preset_label.set_text(msg)
+        fig.canvas.draw_idle()
+
+    def _goto_preset(step):
+        if not presets:
+            return
+        preset_idx[0] = (preset_idx[0] + step) % len(presets)
+        _apply_preset(presets[preset_idx[0]])
+        preset_label.set_text(_preset_label_text())
+        fig.canvas.draw_idle()
+
+    def _save_preset(_event):
+        name = name_box.text.strip() or f'Preset {len(presets) + 1}'
+        preset = _preset_from_state(state, name)
+
+        image_ok = True
+        image_err = None
+        try:
+            slug = _slugify(name)
+            image_name = f'{slug}.png'
+            n = 2
+            while os.path.exists(os.path.join(IMAGES_DIR, image_name)):
+                image_name = f'{slug}-{n}.png'
+                n += 1
+            image_path = os.path.join(IMAGES_DIR, image_name)
+            render_curve_image(preset, image_path)
+            preset['image'] = os.path.join('images', image_name)
+        except Exception as e:
+            image_ok, image_err = False, str(e)
+
+        presets.append(preset)
+        preset_idx[0] = len(presets) - 1
+        try:
+            _write_presets(PRESETS_FILE, presets)
+        except OSError as e:
+            _show_preset_status(f'Save failed: {e}')
+            return
+
+        name_box.set_val('')
+        if image_ok:
+            preset_label.set_text(_preset_label_text())
+        else:
+            _show_preset_status(f'Saved "{name}" (image failed: {image_err})')
+        fig.canvas.draw_idle()
+
+    def _delete_preset(_event):
+        if not presets:
+            return
+        removed = presets[preset_idx[0]]
+        del presets[preset_idx[0]]
+        preset_idx[0] = min(preset_idx[0], len(presets) - 1)
+        image_rel = removed.get('image')
+        if image_rel:
+            try:
+                os.remove(os.path.join(PRESETS_DIR, image_rel))
+            except OSError:
+                pass
+        try:
+            _write_presets(PRESETS_FILE, presets)
+        except OSError as e:
+            _show_preset_status(f'Delete failed: {e}')
+            return
+        preset_label.set_text(_preset_label_text())
+        fig.canvas.draw_idle()
+
+    def _browse_for_path(save):
+        if not _TK_OK:
+            _show_preset_status('Browse unavailable — type a path instead')
+            return
+        root = tkinter.Tk()
+        root.withdraw()
+        try:
+            if save:
+                path = _filedialog.asksaveasfilename(
+                    defaultextension='.json',
+                    filetypes=[('Lissajous presets', '*.json')],
+                    initialfile='lissajous_shared.json')
+            else:
+                path = _filedialog.askopenfilename(
+                    filetypes=[('Lissajous presets', '*.json'), ('All files', '*.*')])
+        finally:
+            root.destroy()
+        if path:
+            path_box.set_val(path)
+
+    def _browse_path_cb(_event):
+        _browse_for_path(save=True)
+
+    def _export_presets(_event):
+        path = path_box.text.strip()
+        if not path:
+            return
+        if not path.lower().endswith('.json'):
+            path += '.json'
+            path_box.set_val(path)
+        try:
+            _write_presets(path, presets)
+        except OSError as e:
+            _show_preset_status(f'Export failed: {e}')
+            return
+        _show_preset_status(f'Exported {len(presets)} preset(s) → {os.path.basename(path)}')
+
+    def _import_presets(_event):
+        path = path_box.text.strip()
+        if not path:
+            return
+        try:
+            incoming = _load_presets(path)
+        except OSError as e:
+            _show_preset_status(f'Import failed: {e}')
+            return
+        if not incoming:
+            _show_preset_status('No presets found in that file')
+            return
+        existing_names = {p['name'] for p in presets}
+        added = 0
+        for p in incoming:
+            name = p.get('name', 'Imported preset')
+            if name in existing_names:
+                base, n = name, 2
+                while f'{base} ({n})' in existing_names:
+                    n += 1
+                name = f'{base} ({n})'
+            new_p = dict(p)
+            new_p['name'] = name
+            new_p.pop('image', None)  # the image file itself isn't bundled in the export
+            try:
+                slug = _slugify(name)
+                image_name = f'{slug}.png'
+                m = 2
+                while os.path.exists(os.path.join(IMAGES_DIR, image_name)):
+                    image_name = f'{slug}-{m}.png'
+                    m += 1
+                render_curve_image(new_p, os.path.join(IMAGES_DIR, image_name))
+                new_p['image'] = os.path.join('images', image_name)
+            except Exception:
+                pass  # metadata still imports fine without a local image
+            presets.append(new_p)
+            existing_names.add(name)
+            added += 1
+        preset_idx[0] = len(presets) - 1
+        try:
+            _write_presets(PRESETS_FILE, presets)
+        except OSError as e:
+            _show_preset_status(f'Import saved in-memory only — {e}')
+            return
+        _show_preset_status(f'Imported {added} preset(s)')
+
     # ── Event callbacks ───────────────────────────────────────────────────────
 
     def on_click(event):
@@ -910,6 +1240,9 @@ def main():
                 full_redraw()
 
     def on_key(event):
+        if name_box.capturekeystrokes or path_box.capturekeystrokes:
+            return  # let the focused text box handle its own typing
+
         key = (event.key or '').lower()
 
         if key in ('1', '2', '3', '4'):
@@ -1017,6 +1350,14 @@ def main():
     for (key, _), btn in zip(_AUDIO_TONE_NAMES, _aud_tone_btns):
         btn.on_clicked(_make_tone_cb(key))
     sl_vol.on_changed(_audio_engine.set_volume)
+
+    btn_preset_save.on_clicked(_save_preset)
+    btn_preset_prev.on_clicked(lambda _: _goto_preset(-1))
+    btn_preset_next.on_clicked(lambda _: _goto_preset(1))
+    btn_preset_del.on_clicked(_delete_preset)
+    btn_preset_browse.on_clicked(_browse_path_cb)
+    btn_preset_export.on_clicked(_export_presets)
+    btn_preset_import.on_clicked(_import_presets)
 
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event',    on_key)

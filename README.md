@@ -58,6 +58,20 @@ Additional on-screen controls:
 | **Temperament buttons** | Switch tuning system (see below) |
 | **Audio on/off + tone buttons** | Enable real-time audio synthesis (Sine / E. Piano / Piano) with a volume slider |
 
+## Presets
+
+Found a curve you like? The controls at the very bottom of the window let
+you save it and share it:
+
+| Control | What it does |
+|---------|-------------|
+| **name box + Save** | Saves the current notes, octaves, phase, and temperament to a local library (`~/.lissajous_keyboard/presets.json`), and drops a PNG snapshot of the curve in `~/.lissajous_keyboard/images/` so you can browse saved curves in any image viewer without opening the app |
+| **◀ / ▶** | Browse your saved presets — the curve updates live as you step through them |
+| **Delete** | Removes the currently-shown preset (and its snapshot image) from your library |
+| **path box + Browse…** | Pick or type a file path for exporting/importing a shareable preset file |
+| **Export ↑** | Writes your whole preset library to the chosen `.json` file |
+| **Import ↓** | Loads presets from a `.json` file someone shared with you, merging them into your library (auto-renamed on name collisions) |
+
 ## Tuning Systems
 
 | System | Description |
