@@ -1,4 +1,4 @@
-# Lissajous Keyboard Interface
+# Lissajous
 
 An interactive Lissajous-curve visualizer driven by a piano keyboard — play
 four notes (via MIDI or the computer keyboard) and watch their combined
