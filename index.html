@@ -45,12 +45,32 @@
     display: flex; align-items: center; justify-content: center; gap: 12px;
     width: 100%; max-width: 1080px; margin: 4px 0 10px; position: relative;
   }
+  .title-btn-group { position: absolute; right: 0; display: flex; gap: 6px; }
   .mode-toggle-btn {
     background: var(--btn-off); color: var(--white); border: 1px solid var(--accent);
     border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer;
-    position: absolute; right: 0;
   }
   .mode-toggle-btn:hover { background: #162840; }
+
+  /* ---- fullscreen visualizer ---- */
+  .viz-overlay {
+    position: fixed; inset: 0; background: #000; z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .viz-overlay canvas { touch-action: none; }
+  .viz-overlay.mode-3d canvas { cursor: grab; }
+  .viz-overlay.mode-3d canvas:active { cursor: grabbing; }
+  .viz-exit {
+    position: absolute; top: 16px; right: 16px; width: 34px; height: 34px;
+    border-radius: 50%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25);
+    color: #aaa; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .viz-exit:hover { background: rgba(255,255,255,0.16); color: #fff; }
+  .viz-hint {
+    position: absolute; bottom: 18px; left: 0; right: 0; text-align: center;
+    color: #555; font-size: 11.5px; pointer-events: none;
+  }
+  #vizOverlay[hidden] { display: none; }
 
   .panel { width: 100%; max-width: 1080px; }
 
@@ -216,7 +236,16 @@
 
 <div class="title-row">
   <h1 id="pageTitle">4-NOTE LISSAJOUS CURVE &nbsp;·&nbsp; KEYBOARD INTERFACE</h1>
-  <button class="mode-toggle-btn" id="modeToggle">3D View &rarr;</button>
+  <div class="title-btn-group">
+    <button class="mode-toggle-btn" id="vizToggle" title="Full-screen visualizer">&#9974; Visualizer</button>
+    <button class="mode-toggle-btn" id="modeToggle">3D View &rarr;</button>
+  </div>
+</div>
+
+<div class="viz-overlay" id="vizOverlay" hidden>
+  <button class="viz-exit" id="vizExit" title="Exit visualizer (Esc)">&#10005;</button>
+  <canvas id="vizCanvas"></canvas>
+  <div class="viz-hint" id="vizHint">Esc to exit</div>
 </div>
 
 <div class="panel">

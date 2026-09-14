@@ -563,8 +563,12 @@ function renderCurveToCtx(ctx, w, h, x, y, withGrid = true) {
   }
 }
 
+let _last2D = null; // cached [x,y] so the visualizer overlay can redraw independently
+
 function drawCurve(x, y) {
   renderCurveToCtx(curveCtx, CURVE_SIZE, CURVE_SIZE, x, y);
+  _last2D = [x, y];
+  syncViz();
 }
 
 // Standalone PNG snapshot of a curve — used when saving/importing a preset.
@@ -697,19 +701,23 @@ function drawCubeLabel(ctx, size, text, anchor3D, dirVec, color, rot = rot3D) {
 }
 
 // Draws the cube wireframe + curve + face labels onto any ctx/size, at any
-// rotation — shared by the live canvas and the offscreen preset snapshot.
-function renderCube3DToCtx(ctx, size, x, y, z, rot = rot3D) {
+// rotation — shared by the live canvas, the offscreen preset snapshot, and
+// (with the wireframe/labels switched off) the bare-curve visualizer.
+function renderCube3DToCtx(ctx, size, x, y, z, rot = rot3D, opts = {}) {
+  const { wireframe = true, labels = true } = opts;
   ctx.clearRect(0, 0, size, size);
 
-  ctx.strokeStyle = DIM_COL;
-  ctx.lineWidth = 1;
-  ctx.globalAlpha = 0.8;
-  for (const [a, b] of CUBE_EDGES) {
-    const [ax, ay] = cubeToScreen(...project3D(...a, rot).slice(0, 2), size);
-    const [bx, by] = cubeToScreen(...project3D(...b, rot).slice(0, 2), size);
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  if (wireframe) {
+    ctx.strokeStyle = DIM_COL;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.8;
+    for (const [a, b] of CUBE_EDGES) {
+      const [ax, ay] = cubeToScreen(...project3D(...a, rot).slice(0, 2), size);
+      const [bx, by] = cubeToScreen(...project3D(...b, rot).slice(0, 2), size);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
 
   const n = x.length;
   const sx = new Float64Array(n), sy = new Float64Array(n);
@@ -733,13 +741,15 @@ function renderCube3DToCtx(ctx, size, x, y, z, rot = rot3D) {
     ctx.stroke();
   }
 
-  // Labels sit on whichever face matplotlib-style axes would render as a
-  // background wall at this rotation — computed once for the app's default
-  // angle; if you rotate a lot they may drift from a truly "far" face, same
-  // simplification the desktop app makes.
-  drawCubeLabel(ctx, size, 'Y–Z', [-1.32, 0, 0], [0, 1, 0], '#7a8fa8', rot);
-  drawCubeLabel(ctx, size, 'X–Z', [0, 1.32, 0], [1, 0, 0], '#7a8fa8', rot);
-  drawCubeLabel(ctx, size, 'X–Y', [0, 0, -1.32], [0, 1, 0], '#7a8fa8', rot);
+  if (labels) {
+    // Labels sit on whichever face matplotlib-style axes would render as a
+    // background wall at this rotation — computed once for the app's default
+    // angle; if you rotate a lot they may drift from a truly "far" face, same
+    // simplification the desktop app makes.
+    drawCubeLabel(ctx, size, 'Y–Z', [-1.32, 0, 0], [0, 1, 0], '#7a8fa8', rot);
+    drawCubeLabel(ctx, size, 'X–Z', [0, 1.32, 0], [1, 0, 0], '#7a8fa8', rot);
+    drawCubeLabel(ctx, size, 'X–Y', [0, 0, -1.32], [0, 1, 0], '#7a8fa8', rot);
+  }
 }
 
 const projTopCtx = $('#projTop').getContext('2d');
@@ -757,6 +767,7 @@ function updateCube3DFull() {
   _last3D = [x, y, z];
 
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
+  syncViz();
   renderCurveToCtx(projTopCtx, 200, 200, x, z);
   renderCurveToCtx(projFrontCtx, 200, 200, x, y);
   renderCurveToCtx(projSideCtx, 220, 220, y, z);
@@ -780,6 +791,7 @@ function updateCube3DFast() {
   const [x, y, z] = lissajous3(freqs, state3d.phiY, state3d.phiZ);
   _last3D = [x, y, z];
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
+  syncViz();
   renderCurveToCtx(projTopCtx, 200, 200, x, z);
   renderCurveToCtx(projFrontCtx, 200, 200, x, y);
   renderCurveToCtx(projSideCtx, 220, 220, y, z);
@@ -793,6 +805,7 @@ function redrawCube3DRotationOnly() {
   if (!_last3D) return;
   const [x, y, z] = _last3D;
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
+  syncViz();
 }
 
 function renderCube3DSnapshot(freqs, phiY, phiZ, size = 480) {
@@ -813,23 +826,26 @@ function renderCube3DSnapshot(freqs, phiY, phiZ, size = 480) {
   return off.toDataURL('image/png');
 }
 
-// ---- drag-to-rotate ----
-let _cubeDragging = false, _cubeLastX = 0, _cubeLastY = 0;
-cube3dCanvas.addEventListener('pointerdown', (ev) => {
-  _cubeDragging = true;
-  _cubeLastX = ev.clientX; _cubeLastY = ev.clientY;
-  cube3dCanvas.setPointerCapture(ev.pointerId);
-});
-cube3dCanvas.addEventListener('pointermove', (ev) => {
-  if (!_cubeDragging) return;
-  const dx = ev.clientX - _cubeLastX, dy = ev.clientY - _cubeLastY;
-  _cubeLastX = ev.clientX; _cubeLastY = ev.clientY;
-  rot3D.azim += dx * 0.012;
-  rot3D.elev = Math.max(-1.5, Math.min(1.5, rot3D.elev - dy * 0.012));
-  redrawCube3DRotationOnly();
-});
-cube3dCanvas.addEventListener('pointerup', () => { _cubeDragging = false; });
-cube3dCanvas.addEventListener('pointercancel', () => { _cubeDragging = false; });
+// ---- drag-to-rotate (shared by the inline cube canvas and the visualizer) ----
+function attachDragToRotate(canvas, onRotate) {
+  let dragging = false, lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', (ev) => {
+    dragging = true;
+    lastX = ev.clientX; lastY = ev.clientY;
+    canvas.setPointerCapture(ev.pointerId);
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    const dx = ev.clientX - lastX, dy = ev.clientY - lastY;
+    lastX = ev.clientX; lastY = ev.clientY;
+    rot3D.azim += dx * 0.012;
+    rot3D.elev = Math.max(-1.5, Math.min(1.5, rot3D.elev - dy * 0.012));
+    onRotate();
+  });
+  canvas.addEventListener('pointerup', () => { dragging = false; });
+  canvas.addEventListener('pointercancel', () => { dragging = false; });
+}
+attachDragToRotate(cube3dCanvas, redrawCube3DRotationOnly);
 
 function resizeCube3D() {
   const wrap = cube3dCanvas.parentElement;
@@ -849,6 +865,78 @@ function fullRedraw() {
   if (mode === '2d') updateCurveFull();
   else updateCube3DFull();
 }
+
+// ---------------------------------------------------------------------------
+// Full-screen visualizer — just the curve, large, on black, no axes/grid/
+// wireframe behind it. Meant for projecting during a live performance while
+// still playing notes normally (piano/keyboard/MIDI keep working underneath).
+// ---------------------------------------------------------------------------
+const vizOverlay = $('#vizOverlay');
+const vizCanvas = $('#vizCanvas');
+const vizCtx = vizCanvas.getContext('2d');
+const vizToggleBtn = $('#vizToggle');
+const vizExitBtn = $('#vizExit');
+const vizHintEl = $('#vizHint');
+
+let vizActive = false;
+let VIZ_SIZE = 0;
+
+function resizeVizCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const size = Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.92);
+  VIZ_SIZE = size;
+  vizCanvas.style.width = `${size}px`;
+  vizCanvas.style.height = `${size}px`;
+  vizCanvas.width = size * dpr;
+  vizCanvas.height = size * dpr;
+  vizCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// Called from every place that already redraws the small on-screen curve/cube
+// — a no-op unless the overlay is open, so it's cheap to sprinkle everywhere.
+function syncViz() {
+  if (!vizActive) return;
+  if (mode === '2d') {
+    if (!_last2D) return;
+    renderCurveToCtx(vizCtx, VIZ_SIZE, VIZ_SIZE, _last2D[0], _last2D[1], /* withGrid */ false);
+  } else {
+    if (!_last3D) return;
+    renderCube3DToCtx(vizCtx, VIZ_SIZE, ..._last3D, rot3D, { wireframe: false, labels: false });
+  }
+}
+
+attachDragToRotate(vizCanvas, redrawCube3DRotationOnly);
+
+function enterViz() {
+  vizActive = true;
+  vizOverlay.hidden = false;
+  vizOverlay.classList.toggle('mode-3d', mode === '3d');
+  vizHintEl.textContent = mode === '3d' ? 'Drag to rotate  ·  Esc to exit' : 'Esc to exit';
+  resizeVizCanvas();
+  syncViz();
+  const req = vizOverlay.requestFullscreen || vizOverlay.webkitRequestFullscreen;
+  if (req) req.call(vizOverlay).catch?.(() => {});
+}
+
+function exitViz() {
+  vizActive = false;
+  vizOverlay.hidden = true;
+  if (document.fullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen)?.call(document).catch?.(() => {});
+  }
+}
+
+vizToggleBtn.addEventListener('click', enterViz);
+vizExitBtn.addEventListener('click', exitViz);
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && vizActive) exitViz();
+});
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && vizActive) exitViz();
+});
+window.addEventListener('resize', () => {
+  if (vizActive) { resizeVizCanvas(); syncViz(); }
+});
 
 // ---------------------------------------------------------------------------
 // Phase sliders + animate buttons
