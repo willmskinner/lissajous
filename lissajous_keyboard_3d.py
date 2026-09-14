@@ -1,14 +1,20 @@
 """
-Lissajous Curve — Four Musical Notes  ·  Piano Keyboard Interface  ·  2D module
+Lissajous Curve — Three Musical Notes  ·  Piano Keyboard Interface  ·  3D module
 
-  X-axis:  x(t) = sin(r1·t)          + sin(r2·t + φx)
-  Y-axis:  y(t) = sin(r3·t + φxy)    + sin(r4·t + φxy)
+  X(t) = sin(rx·t)
+  Y(t) = sin(ry·t + φy)
+  Z(t) = sin(rz·t + φz)
 
-Select notes by clicking the on-screen piano keyboard or pressing
-computer-keyboard shortcuts (standard DAW virtual-piano layout —
-key labels appear on the piano keys).
+One note per axis (instead of the 2D module's two-notes-summed-per-axis).
+The central plot is the true 3D curve; the panel above it, below it, and to
+its right are the 2D projections onto the XZ ("top"), XY ("front"), and YZ
+("side") planes.
 
-  1 / 2 / 3 / 4   select active note slot
+Same piano / computer-keyboard controls, phase sliders, temperaments, audio
+engine, and preset system as the 2D module — see lissajous_keyboard.py.
+Notes go to X/Y/Z instead of four note slots:
+
+  1 / 2 / 3        select active note slot (X / Y / Z)
   Tab              cycle active slot
   [ / ]            shift the home octave down / up
   A–J              C D E F G A B  (home octave)
@@ -17,189 +23,220 @@ key labels appear on the piano keys).
   O P              C# D#  (+1 octave)
   Space            toggle sound on/off
 
-Presets — save a curve you like (notes, octaves, phase, temperament) to a
-local library, browse it with the ◀ ▶ buttons, and export/import it as a
-JSON file to share curves with other users of this app. Saving also drops
-a PNG snapshot of the curve in ~/.lissajous_keyboard/images/, so you can
-browse your saved curves in any image viewer without opening this app.
-
-The "3D View" button in the top-right switches to the 3-note 3D module
-(lissajous_keyboard_3d.py) without losing your audio/MIDI connection.
+The "2D View" button in the top-right switches back to the 2D module
+without losing your audio/MIDI connection.
 """
 
 import os
 import numpy as np
 from matplotlib.widgets import Slider, Button, TextBox
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers the 3d projection)
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 import lissajous_common as lc
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Lissajous computation  (2D: two notes summed on each axis)
+# Lissajous computation  (3D: one note per axis)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_N_POINTS = 8000
+_N_POINTS = 6000
+
+AXIS_NAMES = ['X', 'Y', 'Z']
+AXIS_COLS  = [lc.X_COL, lc.Y_COL, lc.Z_COL]
+SLOT_COLS  = lc.NOTE_COLS[:3]
 
 
-def lissajous_4(freqs, phi_x, phi_xy, n=_N_POINTS):
+def lissajous_3(freqs, phi_y, phi_z, n=_N_POINTS):
     f_min = min(freqs)
-    r  = [f / f_min for f in freqs]
-    T  = lc.period(freqs)
-    t  = np.linspace(0, 2 * np.pi * T, n)
-    x  = np.sin(r[0] * t)           + np.sin(r[1] * t + phi_x)
-    y  = np.sin(r[2] * t + phi_xy)  + np.sin(r[3] * t + phi_xy)
-    xs, ys = np.abs(x).max(), np.abs(y).max()
-    if xs > 1e-6: x /= xs
-    else:         x[:] = 0.0
-    if ys > 1e-6: y /= ys
-    else:         y[:] = 0.0
-    return x, y
+    r = [f / f_min for f in freqs]
+    T = lc.period(freqs)
+    t = np.linspace(0, 2 * np.pi * T, n)
+    x = np.sin(r[0] * t)
+    y = np.sin(r[1] * t + phi_y)
+    z = np.sin(r[2] * t + phi_z)
+    for arr in (x, y, z):
+        m = np.abs(arr).max()
+        if m > 1e-6:
+            arr /= m
+    return x, y, z
+
+
+def _gradient_line3d(x, y, z, color=lc.CURVE_COL, linewidth=1.2):
+    n = len(x)
+    xyz = np.stack([x, y, z], axis=1)
+    segs = np.stack([xyz[:-1], xyz[1:]], axis=1)
+    import matplotlib.colors as mcolors
+    r, g, b = mcolors.to_rgb(color)
+    alphas = np.linspace(0.15, 1.0, n - 1)
+    colors = np.column_stack([np.full(n - 1, r), np.full(n - 1, g),
+                               np.full(n - 1, b), alphas])
+    lc3d = Line3DCollection(segs, linewidths=linewidth)
+    lc3d.set_color(colors)
+    return lc3d
 
 
 def render_curve_image(preset, path, size_px=640, dpi=120):
-    """Standalone PNG snapshot of a preset's curve — viewable in any image
-    viewer, without opening this app."""
+    """Standalone PNG snapshot of a 3D preset's curve."""
     freqs = [lc.note_freq(preset['notes'][i], preset['octaves'][i], preset['temperament'])
-             for i in range(4)]
+             for i in range(3)]
     phases = lc.preset_phases(preset)
-    x, y = lissajous_4(freqs, phases['phi_x'], phases['phi_xy'])
+    x, y, z = lissajous_3(freqs, phases['phi_y'], phases['phi_z'])
 
-    fig, ax = lc.new_offscreen_figure(size_px, dpi)
-    ax.set_xlim(-1.15, 1.15)
-    ax.set_ylim(-1.15, 1.15)
-    ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.add_collection(lc.gradient_line_collection(x, y, linewidth=1.6))
+    fig, ax = lc.new_offscreen_figure(size_px, dpi, projection='3d')
+    _style_3d_axes(ax)
+    ax.add_collection3d(_gradient_line3d(x, y, z, linewidth=1.8))
+    ax.view_init(elev=22, azim=-60)
 
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     fig.savefig(path, facecolor=lc.BG)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Curve drawing — persistent LineCollection (no ax.clear() on each frame)
-# ─────────────────────────────────────────────────────────────────────────────
 
-def _init_curve_ax(ax):
-    """Set up ax_main once: static decorations + persistent LineCollection.
-    Returns (lc_artist, segs_buf)."""
+def _style_3d_axes(ax):
+    ax.set_facecolor(lc.BG)
+    ax.set_xlim(-1.15, 1.15)
+    ax.set_ylim(-1.15, 1.15)
+    ax.set_zlim(-1.15, 1.15)
+    try:
+        ax.set_box_aspect([1, 1, 1])
+    except AttributeError:
+        pass
+    for pane in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
+        pane.set_facecolor(lc.BG)
+        pane.set_edgecolor(lc.DIM)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.line.set_color(lc.DIM)
+        axis._axinfo['grid']['color'] = lc.DIM
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+
+
+def _init_projection_ax(ax, title):
     ax.set_facecolor(lc.BG)
     for v in [-1, -0.5, 0, 0.5, 1]:
-        ax.axhline(v, color=lc.DIM, lw=0.3, alpha=0.6)
-        ax.axvline(v, color=lc.DIM, lw=0.3, alpha=0.6)
+        ax.axhline(v, color=lc.DIM, lw=0.3, alpha=0.5)
+        ax.axvline(v, color=lc.DIM, lw=0.3, alpha=0.5)
     ax.set_xlim(-1.15, 1.15)
     ax.set_ylim(-1.15, 1.15)
     ax.set_aspect('equal')
     ax.set_xticks([])
     ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_color(lc.DIM)
-    ax.set_xlabel('', color=lc.X_COL, fontsize=9, labelpad=5)
-    ax.set_ylabel('', color=lc.Y_COL, fontsize=9, labelpad=5, rotation=90)
-    ax.set_title('', color=lc.WHITE, fontsize=10, pad=10)
-
-    n_seg = _N_POINTS - 1
-    segs_buf = np.empty((n_seg, 2, 2))
-    lc_artist = lc.gradient_line_collection(np.zeros(_N_POINTS), np.zeros(_N_POINTS))
+    for sp in ax.spines.values():
+        sp.set_color(lc.DIM)
+    ax.set_title(title, color='#7a8fa8', fontsize=8, pad=4)
+    lc_artist = lc.gradient_line_collection(np.zeros(2), np.zeros(2))
     ax.add_collection(lc_artist)
-    return lc_artist, segs_buf
+    return lc_artist
 
 
-def _fill_curve(lc_artist, freqs, phi_x, phi_xy, segs_buf):
-    """Update curve geometry only — no label recalculation.
-    Called every animation frame; avoids all per-frame allocation."""
-    x, y = lissajous_4(freqs, phi_x, phi_xy)
-    xy   = np.stack([x, y], axis=1)   # (n, 2)
-    segs_buf[:, 0, :] = xy[:-1]
-    segs_buf[:, 1, :] = xy[1:]
-    lc_artist.set_segments(segs_buf)
-
-
-def _update_curve(lc_artist, ax, freqs, phi_x, phi_xy, labels, temperament, segs_buf):
-    """Update curve geometry + axis labels. Called on note/temperament change."""
-    _fill_curve(lc_artist, freqs, phi_x, phi_xy, segs_buf)
-    f1, f2, f3, f4 = freqs
-    rx, ix = lc.describe_ratio(f1, f2)
-    ry, iy = lc.describe_ratio(f3, f4)
-    ix_s = f' – {ix}' if ix else ''
-    iy_s = f' – {iy}' if iy else ''
-    ax.set_xlabel(
-        f'{labels[0]} ({f1:.1f} Hz) + {labels[1]} ({f2:.1f} Hz)   [{rx}{ix_s}]',
-        color=lc.X_COL, fontsize=9, labelpad=5)
-    ax.set_ylabel(
-        f'{labels[2]} ({f3:.1f} Hz) + {labels[3]} ({f4:.1f} Hz)   [{ry}{iy_s}]',
-        color=lc.Y_COL, fontsize=9, labelpad=5, rotation=90)
-    ax.set_title(f'{temperament}', color=lc.WHITE, fontsize=10, pad=10)
+def _fill_projection(lc_artist, a, b):
+    xy = np.stack([a, b], axis=1)
+    segs = np.stack([xy[:-1], xy[1:]], axis=1)
+    lc_artist.set_segments(segs)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_ui(fig, ctx):
-    """Draw the 2D mode into `fig` (assumed freshly cleared). `ctx` carries
-    the resources that must survive a 2D/3D toggle: audio engine, MIDI
-    queue, and the shared preset library."""
-    ctx['mode'] = '2d'
+    """Draw the 3D mode into `fig` (assumed freshly cleared)."""
+    ctx['mode'] = '3d'
     _audio_engine = ctx['audio_engine']
 
     state = {
-        'notes':       ['A', 'E', 'D', 'A'],
-        'octs':        [ 4,   5,   5,   5 ],
-        'phi_x':       0.0,
-        'phi_xy':      np.pi / 4,
+        'notes':       ['C', 'G', 'C'],
+        'octs':        [ 4,   4,   5 ],
+        'phi_y':       np.pi / 4,
+        'phi_z':       np.pi / 3,
         'temp':        ctx['temp'],
         'active_slot': 0,
-        'base_octave': 4,   # 'A' computer key → C of this octave
-        'anim_phi_x':  False,
-        'anim_phi_xy': False,
+        'base_octave': 4,
+        'anim_phi_y':  False,
+        'anim_phi_z':  False,
     }
 
-    mode_presets = lambda: lc.presets_for_mode(ctx['presets'], '2d')
-    preset_idx = [len(mode_presets()) - 1]  # mutable box (int isn't); -1 if empty
+    mode_presets = lambda: lc.presets_for_mode(ctx['presets'], '3d')
+    preset_idx = [len(mode_presets()) - 1]
 
     piano_keys = lc.build_piano_keys()
 
-    fig.suptitle('4-note Lissajous Curve',
+    fig.suptitle('3-note Lissajous Curve — 3D',
                  color=lc.WHITE, fontsize=13, fontweight='bold', y=0.997)
 
-    # ── Layout ────────────────────────────────────────────────────────────────
-    PRESET_Y, PRESET_H = 0.005, 0.028  # preset row: the very bottom of the window
+    # ── Layout — bottom chrome matches the 2D module for a seamless toggle ──
+    PRESET_Y, PRESET_H = 0.005, 0.028
     TEMP_DESC_Y      = 0.058
     TEMP_Y,  TEMP_H  = 0.068, 0.03
     PHASE_Y, PHASE_H = 0.120, 0.046
     PIANO_Y, PIANO_H = 0.185, 0.140
-    AUDIO_Y, AUDIO_H = 0.128, 0.028   # audio controls strip between phase sliders
-    MAIN_X,  MAIN_Y  = 0.140, 0.368   # lowered slightly to make room for the preset row
-    MAIN_W,  MAIN_H  = 0.720, 0.562   # keep top at 0.930
-    SLOT_X_L, SLOT_X_R, SLOT_W = 0.010, 0.875, 0.110
-    SLOT_Y_TOP, SLOT_H_TOP = 0.640, 0.290
-    SLOT_Y_BOT, SLOT_H_BOT = 0.368, 0.262
+    AUDIO_Y, AUDIO_H = 0.128, 0.028
+
+    GRAPH_Y0, GRAPH_Y1 = 0.345, 0.930   # top-section vertical span
+    GRAPH_YC = (GRAPH_Y0 + GRAPH_Y1) / 2
 
     temp_desc = fig.text(
         0.50, TEMP_DESC_Y, lc.TEMP_DESCRIPTIONS[state['temp']],
         ha='center', va='top', color='#7a8fa8', fontsize=8, style='italic')
 
-    ax_main  = fig.add_axes([MAIN_X,  MAIN_Y,  MAIN_W,  MAIN_H])
-    _curve_lc, _segs_buf = _init_curve_ax(ax_main)
+    # Note slot column (left, narrow): X (top) / Y (middle) / Z (bottom)
+    SLOT_X, SLOT_W = 0.010, 0.075
+    slot_h = (GRAPH_Y1 - GRAPH_Y0 - 0.02) / 3
+    slot_ys = [GRAPH_Y1 - slot_h, GRAPH_Y1 - 2 * slot_h - 0.01, GRAPH_Y0]
+    ax_slots = [fig.add_axes([SLOT_X, y, SLOT_W, slot_h]) for y in slot_ys]
+    _slot_arts = [
+        lc.init_slot_ax(ax_slots[i], f'{AXIS_NAMES[i]} Note',
+                        f'{AXIS_NAMES[i]}  AXIS', AXIS_COLS[i])
+        for i in range(3)
+    ]
 
-    ax_piano = fig.add_axes([0.010,   PIANO_Y, 0.980,   PIANO_H])
+    # The 3D curve is the centerpiece. The three 2D projections are smaller
+    # thumbnails placed nearest the cube face they correspond to: SIDE (Y–Z)
+    # on the left wall's side, TOP (X–Z) upper-right near the back/right
+    # wall, FRONT (X–Y) lower-right near the floor. The upper-right one is
+    # nudged left of the lower-right one (not stacked directly on top) so it
+    # visually reads as the farther-back face.
+    LEFT_PROJ_X, LEFT_PROJ_W, LEFT_PROJ_H = 0.120, 0.170, 0.44
+    ax_left = fig.add_axes([LEFT_PROJ_X, GRAPH_YC - LEFT_PROJ_H / 2,
+                            LEFT_PROJ_W, LEFT_PROJ_H])
+
+    CENTER_X0, CENTER_X1 = LEFT_PROJ_X + LEFT_PROJ_W + 0.02, 0.68
+    ax_3d = fig.add_axes([CENTER_X0, GRAPH_Y0, CENTER_X1 - CENTER_X0,
+                          GRAPH_Y1 - GRAPH_Y0], projection='3d')
+    _style_3d_axes(ax_3d)
+    ax_3d.view_init(elev=22, azim=-60)
+    _curve_3d = _gradient_line3d(np.zeros(2), np.zeros(2), np.zeros(2))
+    ax_3d.add_collection3d(_curve_3d)
+
+    # Unobtrusive labels painted flat onto the cube's own faces — plain
+    # billboard 3D text with a manual screen-space rotation (matplotlib's
+    # zdir-based auto-orientation didn't read as flat-on-the-face), turned
+    # to roughly match each pane's rendered slant at this fixed view_init
+    # (elev=22, azim=-60): the floor is the z=-1.15 pane, the left wall is
+    # x=-1.15, the right wall is y=+1.15.
+    _face_label_kw = dict(color='#7a8fa8', fontsize=8, ha='center', va='center')
+    # Rotations measured directly off this view_init's actual projection —
+    # the angle, in display space, of each face's more-horizontal pair of
+    # boundary edges (the pane border lines running above/below the label).
+    ax_3d.text(0, 0, -1.32, 'X–Z', rotation=-13.7, **_face_label_kw)   # floor   ("top view" side)
+    ax_3d.text(-1.32, 0, 0, 'Y–Z', rotation=30.5,  **_face_label_kw)   # left wall
+    ax_3d.text(0, 1.32, 0, 'X–Y', rotation=-11.5,  **_face_label_kw)   # right wall ("front view" side)
+
+    LOWER_X, RIGHT_PROJ_W = 0.805, 0.185
+    UPPER_X = LOWER_X - RIGHT_PROJ_W  # right edge flush with the lower panel's left edge
+    UPPER_H, LOWER_H = 0.26, 0.2825
+    ax_upper = fig.add_axes([UPPER_X, 0.950 - UPPER_H,
+                             RIGHT_PROJ_W, UPPER_H])
+    ax_lower = fig.add_axes([LOWER_X, GRAPH_Y0,
+                             RIGHT_PROJ_W, LOWER_H])
+
+    _lc_left  = _init_projection_ax(ax_left,  'SIDE   (Y–Z)')
+    _lc_upper = _init_projection_ax(ax_upper, 'TOP   (X–Z)')
+    _lc_lower = _init_projection_ax(ax_lower, 'FRONT   (X–Y)')
+
+    ax_piano = fig.add_axes([0.010, PIANO_Y, 0.980, PIANO_H])
     _piano_arts = lc.init_piano_ax(ax_piano, piano_keys)
 
-    # Note slot axes: 0=Note1(X), 1=Note2(X), 2=Note3(Y), 3=Note4(Y)
-    ax_slots = [
-        fig.add_axes([SLOT_X_L, SLOT_Y_TOP, SLOT_W, SLOT_H_TOP]),
-        fig.add_axes([SLOT_X_L, SLOT_Y_BOT, SLOT_W, SLOT_H_BOT]),
-        fig.add_axes([SLOT_X_R, SLOT_Y_TOP, SLOT_W, SLOT_H_TOP]),
-        fig.add_axes([SLOT_X_R, SLOT_Y_BOT, SLOT_W, SLOT_H_BOT]),
-    ]
-    _slot_arts = [
-        lc.init_slot_ax(ax_slots[i], f'Note {i + 1}',
-                        'X  AXIS' if i < 2 else 'Y  AXIS',
-                        lc.X_COL if i < 2 else lc.Y_COL)
-        for i in range(4)
-    ]
-
-    # Preset row: name entry + save/prev/next/delete, then file path + browse/export/import
+    # Preset row
     ax_preset_name  = fig.add_axes([0.010, PRESET_Y, 0.100, PRESET_H])
     ax_preset_save  = fig.add_axes([0.116, PRESET_Y, 0.050, PRESET_H])
     ax_preset_prev  = fig.add_axes([0.172, PRESET_Y, 0.030, PRESET_H])
@@ -211,12 +248,11 @@ def build_ui(fig, ctx):
     ax_preset_imp   = fig.add_axes([0.879, PRESET_Y, 0.065, PRESET_H])
 
     _ANIM_W = 0.055
-    ax_anim_px  = fig.add_axes([0.010,  PHASE_Y, _ANIM_W, PHASE_H])
-    ax_px       = fig.add_axes([0.130,  PHASE_Y, 0.100,   PHASE_H])
-    ax_pxy      = fig.add_axes([0.790,  PHASE_Y, 0.100,   PHASE_H])
-    ax_anim_pxy = fig.add_axes([0.935,  PHASE_Y, _ANIM_W, PHASE_H])
+    ax_anim_py = fig.add_axes([0.010, PHASE_Y, _ANIM_W, PHASE_H])
+    ax_py      = fig.add_axes([0.130, PHASE_Y, 0.100,   PHASE_H])
+    ax_pz      = fig.add_axes([0.790, PHASE_Y, 0.100,   PHASE_H])
+    ax_anim_pz = fig.add_axes([0.935, PHASE_Y, _ANIM_W, PHASE_H])
 
-    # Audio controls strip
     ax_aud_on   = fig.add_axes([0.310, AUDIO_Y, 0.05, AUDIO_H])
     ax_aud_sine = fig.add_axes([0.365, AUDIO_Y, 0.050, AUDIO_H])
     ax_aud_ep   = fig.add_axes([0.420, AUDIO_Y, 0.050, AUDIO_H])
@@ -228,10 +264,9 @@ def build_ui(fig, ctx):
     btn_axs = [fig.add_axes([0.01 + i * btn_w, TEMP_Y, btn_w * 0.97, TEMP_H])
                for i in range(n_temp)]
 
-    # Mode toggle (top-right corner)
     ax_mode = fig.add_axes([0.900, 0.958, 0.090, 0.032])
 
-    for ax in ([ax_px, ax_pxy, ax_anim_px, ax_anim_pxy,
+    for ax in ([ax_py, ax_pz, ax_anim_py, ax_anim_pz,
                 ax_aud_on, ax_aud_sine, ax_aud_ep, ax_aud_pno, ax_vol,
                 ax_preset_name, ax_preset_save, ax_preset_prev, ax_preset_next,
                 ax_preset_del, ax_preset_path, ax_preset_brow, ax_preset_exp,
@@ -239,45 +274,34 @@ def build_ui(fig, ctx):
                + btn_axs):
         ax.set_facecolor(lc.BG)
 
-    # Static labels
-    fig.text(0.065, 0.943, 'X  AXIS', color=lc.X_COL,
-             ha='center', fontsize=11, fontweight='bold')
-    fig.text(0.860, 0.943, 'Y  AXIS', color=lc.Y_COL,
-             ha='center', fontsize=11, fontweight='bold')
     fig.text(0.50, PIANO_Y + PIANO_H + 0.003,
            'Click a key  ·  A–J = C–B (home oct)  ·  K,O,L,P = next oct  ·  '
-           '[ ] shift octave  ·  1–4 / Tab select slot  ·  Space = sound on/off',
+           '[ ] shift octave  ·  1–3 / Tab select axis  ·  Space = sound on/off',
            ha='center', va='bottom', color='#7a8fa8', fontsize=7)
 
-    # Phase sliders
-    sl_px  = Slider(ax_px,  'φ inner X ', 0, 2 * np.pi,
-                    valinit=state['phi_x'],  color='#996633')
-    sl_pxy = Slider(ax_pxy, 'φ X vs Y ',  0, 2 * np.pi,
-                    valinit=state['phi_xy'], color='#664499')
-    for sl in (sl_px, sl_pxy):
+    sl_py = Slider(ax_py, 'φ Y ', 0, 2 * np.pi, valinit=state['phi_y'], color='#996633')
+    sl_pz = Slider(ax_pz, 'φ Z ', 0, 2 * np.pi, valinit=state['phi_z'], color='#664499')
+    for sl in (sl_py, sl_pz):
         sl.label.set_color(lc.WHITE)
         sl.valtext.set_color(lc.WHITE)
 
-    # Animate buttons (one per slider, at the outer edges)
-    btn_anim_px  = Button(ax_anim_px,  '▶', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_anim_pxy = Button(ax_anim_pxy, '▶', color=lc.BTN_OFF, hovercolor='#162840')
-    for btn in (btn_anim_px, btn_anim_pxy):
+    btn_anim_py = Button(ax_anim_py, '▶', color=lc.BTN_OFF, hovercolor='#162840')
+    btn_anim_pz = Button(ax_anim_pz, '▶', color=lc.BTN_OFF, hovercolor='#162840')
+    for btn in (btn_anim_py, btn_anim_pz):
         btn.label.set_color(lc.WHITE)
         btn.label.set_fontsize(12)
-    for ax in (ax_anim_px, ax_anim_pxy):
+    for ax in (ax_anim_py, ax_anim_pz):
         for sp in ax.spines.values():
             sp.set_edgecolor(lc.BTN_EDGE_OFF)
             sp.set_linewidth(0.5)
 
-    # Mode toggle button
-    btn_mode = Button(ax_mode, '3D View →', color=lc.BTN_OFF, hovercolor='#162840')
+    btn_mode = Button(ax_mode, '2D View →', color=lc.BTN_OFF, hovercolor='#162840')
     btn_mode.label.set_fontsize(8)
     btn_mode.label.set_color(lc.WHITE)
     for sp in ax_mode.spines.values():
         sp.set_edgecolor(lc.ACCENT)
         sp.set_linewidth(1.0)
 
-    # Audio controls
     _AUDIO_TONE_NAMES = [('sine', 'Sine'), ('epiano', 'E. Piano'), ('piano', 'Piano')]
     btn_aud_on   = Button(ax_aud_on,   '♪  off', color=lc.BTN_OFF, hovercolor='#162840')
     btn_aud_sine = Button(ax_aud_sine, 'Sine',    color=lc.BTN_OFF, hovercolor='#162840')
@@ -327,7 +351,6 @@ def build_ui(fig, ctx):
     btn_aud_on.label.set_fontweight('bold')
     _style_audio_on_button(_audio_engine._on)
 
-    # Temperament buttons
     btns = []
     for i, name in enumerate(lc.TEMP_NAMES):
         btn = Button(btn_axs[i], name, color=lc.BTN_OFF, hovercolor='#162840')
@@ -335,7 +358,6 @@ def build_ui(fig, ctx):
         btns.append(btn)
     lc.style_temp_buttons(btn_axs, btns, lc.TEMP_NAMES.index(state['temp']))
 
-    # Preset controls
     def _style_preset_button(ax, btn, edge=lc.ACCENT):
         ax.set_facecolor(lc.BTN_OFF)
         for sp in ax.spines.values():
@@ -388,63 +410,50 @@ def build_ui(fig, ctx):
     # ── Draw helpers ──────────────────────────────────────────────────────────
 
     def redraw_slots():
-        for i in range(4):
+        for i in range(3):
             lc.draw_slot(ax_slots[i], _slot_arts[i], state['notes'][i], state['octs'][i],
-                         state['temp'], lc.NOTE_COLS[i], state['active_slot'] == i, str(i + 1))
-
-    # _blit[0] = saved background pixel buffer (ax_main without the curve)
-    # _blit[1] = guard flag to prevent re-entrant _save_bg calls
-    _blit = [None, False]
-
-    def _save_bg():
-        """Save ax_main background (LC hidden) so animation can blit over it."""
-        if _blit[1]:
-            return
-        _blit[1] = True
-        _curve_lc.set_visible(False)
-        fig.canvas.draw()                                    # sync render, LC absent
-        _blit[0] = fig.canvas.copy_from_bbox(ax_main.bbox)  # capture pixel buffer
-        _curve_lc.set_visible(True)
-        ax_main.draw_artist(_curve_lc)                       # restore LC on screen
-        fig.canvas.blit(ax_main.bbox)
-        _blit[1] = False
-
-    def _refresh_anim(_=None):
-        """Fast animation path: restore saved pixels, draw only the LC, blit."""
-        freqs = [lc.note_freq(state['notes'][i], state['octs'][i], state['temp'])
-                 for i in range(4)]
-        _fill_curve(_curve_lc, freqs, state['phi_x'], state['phi_xy'], _segs_buf)
-        if _blit[0] is not None:
-            fig.canvas.restore_region(_blit[0])
-            ax_main.draw_artist(_curve_lc)
-            fig.canvas.blit(ax_main.bbox)
-        else:
-            fig.canvas.draw_idle()
+                         state['temp'], SLOT_COLS[i], state['active_slot'] == i, str(i + 1))
 
     def full_redraw():
         redraw_slots()
-        lc.update_piano(_piano_arts, piano_keys, state, lc.NOTE_COLS)
-        freqs  = [lc.note_freq(state['notes'][i], state['octs'][i], state['temp'])
-                  for i in range(4)]
-        labels = [f'{state["notes"][i]}{state["octs"][i]}' for i in range(4)]
-        _update_curve(_curve_lc, ax_main, freqs,
-                      state['phi_x'], state['phi_xy'], labels, state['temp'],
-                      _segs_buf)
-        _save_bg()   # sync draw + capture background; also puts LC back on screen
+        lc.update_piano(_piano_arts, piano_keys, state, SLOT_COLS)
+        freqs = [lc.note_freq(state['notes'][i], state['octs'][i], state['temp'])
+                 for i in range(3)]
+        x, y, z = lissajous_3(freqs, state['phi_y'], state['phi_z'])
+
+        segs = np.stack([np.stack([x, y, z], axis=1)[:-1],
+                          np.stack([x, y, z], axis=1)[1:]], axis=1)
+        _curve_3d.set_segments(segs)
+        _fill_projection(_lc_upper, x, z)
+        _fill_projection(_lc_left,  y, z)
+        _fill_projection(_lc_lower, x, y)
+
+        f_x, f_y, f_z = freqs
+        rxy, ixy = lc.describe_ratio(f_x, f_y)
+        rxz, ixz = lc.describe_ratio(f_x, f_z)
+        ryz, iyz = lc.describe_ratio(f_y, f_z)
+        ax_lower.set_title(f'FRONT (X–Y)   [{rxy}{f" – {ixy}" if ixy else ""}]',
+                           color='#7a8fa8', fontsize=8, pad=4)
+        ax_upper.set_title(f'TOP (X–Z)   [{rxz}{f" – {ixz}" if ixz else ""}]',
+                           color='#7a8fa8', fontsize=8, pad=4)
+        ax_left.set_title(f'SIDE (Y–Z)   [{ryz}{f" – {iyz}" if iyz else ""}]',
+                          color='#7a8fa8', fontsize=8, pad=4)
+
+        fig.canvas.draw_idle()
         if _audio_engine._on:
             _audio_engine.set_freqs(freqs)
 
     # ── Preset callbacks ──────────────────────────────────────────────────────
 
     def _apply_preset(p):
-        state['notes']  = list(p['notes'])
-        state['octs']   = list(p['octaves'])
+        state['notes'] = list(p['notes'])
+        state['octs']  = list(p['octaves'])
         phases = lc.preset_phases(p)
-        state['phi_x']  = float(phases['phi_x'])
-        state['phi_xy'] = float(phases['phi_xy'])
-        state['temp']   = p['temperament']
-        sl_px.set_val(state['phi_x'])
-        sl_pxy.set_val(state['phi_xy'])
+        state['phi_y'] = float(phases['phi_y'])
+        state['phi_z'] = float(phases['phi_z'])
+        state['temp']  = p['temperament']
+        sl_py.set_val(state['phi_y'])
+        sl_pz.set_val(state['phi_z'])
         temp_desc.set_text(lc.TEMP_DESCRIPTIONS[state['temp']])
         lc.style_temp_buttons(btn_axs, btns, lc.TEMP_NAMES.index(state['temp']))
         full_redraw()
@@ -464,7 +473,7 @@ def build_ui(fig, ctx):
 
     def _save_preset(_event):
         name = name_box.text.strip() or f'Preset {len(mode_presets()) + 1}'
-        preset = lc.preset_from_state(state, name, '2d')
+        preset = lc.preset_from_state(state, name, '3d')
 
         image_ok = True
         image_err = None
@@ -571,15 +580,15 @@ def build_ui(fig, ctx):
                 name = f'{base} ({n})'
             new_p = dict(p)
             new_p['name'] = name
-            new_p.pop('image', None)  # the image file itself isn't bundled in the export
+            new_p.pop('image', None)
             new_p.setdefault('mode', '2d')
-            if new_p['mode'] == '2d':
+            if new_p['mode'] == '3d':
                 try:
                     image_path, image_rel = lc.unique_image_path(name)
                     render_curve_image(new_p, image_path)
                     new_p['image'] = image_rel
                 except Exception:
-                    pass  # metadata still imports fine without a local image
+                    pass
             ctx['presets'].append(new_p)
             existing_names.add(name)
             added += 1
@@ -596,50 +605,48 @@ def build_ui(fig, ctx):
     def on_click(event):
         if event.inaxes is None:
             return
-        # Click on a note slot → make it active
         for i, ax in enumerate(ax_slots):
             if event.inaxes is ax:
                 state['active_slot'] = i
                 redraw_slots()
                 fig.canvas.draw_idle()
                 return
-        # Click on the piano → assign note to active slot
         if event.inaxes is ax_piano and event.xdata is not None:
             k = lc.find_key_at(piano_keys, event.xdata, event.ydata)
             if k:
                 slot = state['active_slot']
                 state['notes'][slot] = k['note']
                 state['octs'][slot]  = k['octave']
-                state['active_slot'] = (slot + 1) % 4
+                state['active_slot'] = (slot + 1) % 3
                 full_redraw()
 
     def on_key(event):
         if name_box.capturekeystrokes or path_box.capturekeystrokes:
-            return  # let the focused text box handle its own typing
+            return
 
         key = (event.key or '').lower()
 
-        if key in ('1', '2', '3', '4'):
+        if key in ('1', '2', '3'):
             state['active_slot'] = int(key) - 1
             redraw_slots()
             fig.canvas.draw_idle()
             return
 
         if key == 'tab':
-            state['active_slot'] = (state['active_slot'] + 1) % 4
+            state['active_slot'] = (state['active_slot'] + 1) % 3
             redraw_slots()
             fig.canvas.draw_idle()
             return
 
         if key == '[':
             state['base_octave'] = max(lc.PIANO_OCT_LOW, state['base_octave'] - 1)
-            lc.update_piano(_piano_arts, piano_keys, state, lc.NOTE_COLS)
+            lc.update_piano(_piano_arts, piano_keys, state, SLOT_COLS)
             fig.canvas.draw_idle()
             return
 
         if key == ']':
             state['base_octave'] = min(lc.PIANO_OCT_HIGH - 1, state['base_octave'] + 1)
-            lc.update_piano(_piano_arts, piano_keys, state, lc.NOTE_COLS)
+            lc.update_piano(_piano_arts, piano_keys, state, SLOT_COLS)
             fig.canvas.draw_idle()
             return
 
@@ -655,7 +662,7 @@ def build_ui(fig, ctx):
             slot   = state['active_slot']
             state['notes'][slot] = note
             state['octs'][slot]  = octave
-            state['active_slot'] = (slot + 1) % 4
+            state['active_slot'] = (slot + 1) % 3
             full_redraw()
 
     def make_temp_cb(i, name):
@@ -667,8 +674,8 @@ def build_ui(fig, ctx):
             full_redraw()
         return cb
 
-    sl_px.on_changed( lambda v: state.update({'phi_x':  v}) or _refresh_anim())
-    sl_pxy.on_changed(lambda v: state.update({'phi_xy': v}) or _refresh_anim())
+    sl_py.on_changed(lambda v: state.update({'phi_y': v}) or full_redraw())
+    sl_pz.on_changed(lambda v: state.update({'phi_z': v}) or full_redraw())
 
     for i, (btn, name) in enumerate(zip(btns, lc.TEMP_NAMES)):
         btn.on_clicked(make_temp_cb(i, name))
@@ -686,10 +693,8 @@ def build_ui(fig, ctx):
             fig.canvas.draw_idle()
         return cb
 
-    btn_anim_px.on_clicked(_make_anim_toggle('anim_phi_x',  ax_anim_px,  btn_anim_px))
-    btn_anim_pxy.on_clicked(_make_anim_toggle('anim_phi_xy', ax_anim_pxy, btn_anim_pxy))
-
-    # ── Audio callbacks ───────────────────────────────────────────────────────
+    btn_anim_py.on_clicked(_make_anim_toggle('anim_phi_y', ax_anim_py, btn_anim_py))
+    btn_anim_pz.on_clicked(_make_anim_toggle('anim_phi_z', ax_anim_pz, btn_anim_pz))
 
     def _toggle_audio(_):
         if not lc.SD_OK:
@@ -698,7 +703,7 @@ def build_ui(fig, ctx):
             _audio_engine.disable()
         else:
             freqs = [lc.note_freq(state['notes'][i], state['octs'][i], state['temp'])
-                     for i in range(4)]
+                     for i in range(3)]
             _audio_engine.enable(freqs)
         _style_audio_on_button(_audio_engine._on)
         fig.canvas.draw_idle()
@@ -729,19 +734,17 @@ def build_ui(fig, ctx):
     btn_preset_export.on_clicked(_export_presets)
     btn_preset_import.on_clicked(_import_presets)
 
-    def _switch_to_3d(_event):
-        import lissajous_keyboard_3d as m3d
+    def _switch_to_2d(_event):
+        import lissajous_keyboard as m2d
         lc.teardown_ui(fig, ctx)
-        m3d.build_ui(fig, ctx)
+        m2d.build_ui(fig, ctx)
         fig.canvas.draw_idle()
 
-    btn_mode.on_clicked(_switch_to_3d)
+    btn_mode.on_clicked(_switch_to_2d)
 
     ctx['_cids'] = [
         fig.canvas.mpl_connect('button_press_event', on_click),
         fig.canvas.mpl_connect('key_press_event',    on_key),
-        fig.canvas.mpl_connect('resize_event', lambda _e: (_blit.__setitem__(0, None),
-                                                            _save_bg())),
     ]
 
     full_redraw()
@@ -759,7 +762,7 @@ def build_ui(fig, ctx):
     else:
         midi_status.set_text('MIDI  ·  no device found')
 
-    _ANIM_STEP = 0.05  # radians per 40 ms  ≈ 5 s per full 2π cycle
+    _ANIM_STEP = 0.05
 
     def _poll_midi():
         midi_changed = False
@@ -771,13 +774,16 @@ def build_ui(fig, ctx):
             slot   = state['active_slot']
             state['notes'][slot] = note
             state['octs'][slot]  = octave
-            state['active_slot'] = (slot + 1) % 4
+            state['active_slot'] = (slot + 1) % 3
             midi_changed = True
-        if state['anim_phi_x']:
-            sl_px.set_val((state['phi_x'] + _ANIM_STEP) % (2 * np.pi))
-        if state['anim_phi_xy']:
-            sl_pxy.set_val((state['phi_xy'] + _ANIM_STEP) % (2 * np.pi))
-        if midi_changed:
+        anim = False
+        if state['anim_phi_y']:
+            sl_py.set_val((state['phi_y'] + _ANIM_STEP) % (2 * np.pi))
+            anim = True
+        if state['anim_phi_z']:
+            sl_pz.set_val((state['phi_z'] + _ANIM_STEP) % (2 * np.pi))
+            anim = True
+        if midi_changed and not anim:
             full_redraw()
 
     _midi_timer = fig.canvas.new_timer(interval=40)
@@ -787,4 +793,4 @@ def build_ui(fig, ctx):
 
 
 if __name__ == '__main__':
-    lc.run_app('2d')
+    lc.run_app('3d')

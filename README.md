@@ -72,6 +72,16 @@ you save it and share it:
 | **Export ↑** | Writes your whole preset library to the chosen `.json` file |
 | **Import ↓** | Loads presets from a `.json` file someone shared with you, merging them into your library (auto-renamed on name collisions) |
 
+## 3D Mode
+
+Click **3D View →** (top-right) to switch to a 3-note version: one note per
+axis (X/Y/Z) instead of two notes summed per axis, drawn as a true 3D curve
+with its three 2D projections (top/front/side) shown alongside. **2D View →**
+switches back — your audio, MIDI connection, and temperament choice carry
+over across the switch. The code for it lives in `lissajous_keyboard_3d.py`,
+sharing its piano/audio/preset machinery with the 2D module via
+`lissajous_common.py`.
+
 ## Tuning Systems
 
 | System | Description |
