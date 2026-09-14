@@ -221,9 +221,21 @@ def build_ui(fig, ctx):
     ax_3d.text(-1.32, 0, 0, 'Y–Z', rotation=30.5,  **_face_label_kw)   # left wall
     ax_3d.text(0, 1.32, 0, 'X–Y', rotation=-11.5,  **_face_label_kw)   # right wall ("front view" side)
 
-    LOWER_X, RIGHT_PROJ_W = 0.805, 0.185
+    LOWER_X = 0.805
+    UPPER_H = LOWER_H = 0.2825
+    # _init_projection_ax below sets equal data aspect (xlim/ylim both
+    # [-1.15, 1.15], a 1:1 box), and matplotlib enforces that by shrinking
+    # each axes to a centered square, discarding the rest of its requested
+    # width — independently per axes, around each one's own center. Two
+    # panels placed edge-to-edge using the *requested* width therefore end
+    # up with a gap between them (each contributes half its own shrink to
+    # the gap) even though the math says they should touch. Requesting the
+    # width the box will actually keep — computed from its height and the
+    # figure's real aspect ratio — makes the shrink a no-op, so the panels
+    # stay genuinely flush.
+    fig_w_in, fig_h_in = fig.get_size_inches()
+    RIGHT_PROJ_W = LOWER_H * (fig_h_in / fig_w_in)
     UPPER_X = LOWER_X - RIGHT_PROJ_W  # right edge flush with the lower panel's left edge
-    UPPER_H, LOWER_H = 0.26, 0.2825
     ax_upper = fig.add_axes([UPPER_X, 0.950 - UPPER_H,
                              RIGHT_PROJ_W, UPPER_H])
     ax_lower = fig.add_axes([LOWER_X, GRAPH_Y0,
