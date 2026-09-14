@@ -447,10 +447,11 @@ function drawGrid(ctx, w, h) {
 
 let CURVE_SIZE = 560; // logical (CSS-pixel) canvas size; kept in sync by resizeCanvas()
 
-function drawCurve(x, y) {
-  const w = CURVE_SIZE, h = CURVE_SIZE;
-  curveCtx.clearRect(0, 0, w, h);
-  drawGrid(curveCtx, w, h);
+// Renders the curve onto any ctx/size — used both for the live on-screen
+// canvas and for offscreen preset-snapshot rendering.
+function renderCurveToCtx(ctx, w, h, x, y, withGrid = true) {
+  ctx.clearRect(0, 0, w, h);
+  if (withGrid) drawGrid(ctx, w, h);
 
   const n = x.length;
   const toPx = (v) => ((v + 1.15) / 2.3) * w;
@@ -458,19 +459,35 @@ function drawCurve(x, y) {
 
   // group segments into alpha buckets for performance
   const BUCKETS = 24;
-  curveCtx.lineWidth = 1.4;
-  curveCtx.lineCap = 'butt';
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = 'butt';
   const [r, g, b] = CURVE_COL_RGB;
   for (let bIdx = 0; bIdx < BUCKETS; bIdx++) {
     const i0 = Math.floor((bIdx / BUCKETS) * (n - 1));
     const i1 = Math.floor(((bIdx + 1) / BUCKETS) * (n - 1));
     const alpha = 0.15 + (0.85 * (bIdx + 1)) / BUCKETS;
-    curveCtx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
-    curveCtx.beginPath();
-    curveCtx.moveTo(toPx(x[i0]), toPy(y[i0]));
-    for (let i = i0 + 1; i <= i1; i++) curveCtx.lineTo(toPx(x[i]), toPy(y[i]));
-    curveCtx.stroke();
+    ctx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(toPx(x[i0]), toPy(y[i0]));
+    for (let i = i0 + 1; i <= i1; i++) ctx.lineTo(toPx(x[i]), toPy(y[i]));
+    ctx.stroke();
   }
+}
+
+function drawCurve(x, y) {
+  renderCurveToCtx(curveCtx, CURVE_SIZE, CURVE_SIZE, x, y);
+}
+
+// Standalone PNG snapshot of a curve — used when saving/importing a preset.
+function renderCurveSnapshot(freqs, phiX, phiXY, size = 480) {
+  const [x, y] = lissajous4(freqs, phiX, phiXY);
+  const off = document.createElement('canvas');
+  off.width = size; off.height = size;
+  const ctx = off.getContext('2d');
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#0b0c1e';
+  ctx.fillRect(0, 0, size, size);
+  renderCurveToCtx(ctx, size, size, x, y, /* withGrid */ false);
+  return off.toDataURL('image/png');
 }
 
 function updateCurveFull() {
@@ -686,6 +703,8 @@ slVol.addEventListener('input', () => audioEngine.setVolume(parseFloat(slVol.val
 // ---------------------------------------------------------------------------
 window.addEventListener('keydown', (ev) => {
   if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+  const activeTag = document.activeElement && document.activeElement.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return; // let the focused field handle its own typing
   const key = ev.key.toLowerCase();
 
   if (['1', '2', '3', '4'].includes(key)) {
@@ -766,6 +785,204 @@ function initMidi() {
     midiStatusEl.textContent = 'MIDI · permission denied';
   });
 }
+
+// ---------------------------------------------------------------------------
+// Presets — save/browse/delete locally (localStorage), export/import as a
+// shareable JSON file. Mirrors the Python app's preset system; the curve
+// snapshot is embedded as a data: URL instead of a separate PNG file, so a
+// single exported .json is fully self-contained (metadata + picture).
+// ---------------------------------------------------------------------------
+const PRESETS_KEY = 'lissajousPresets';
+
+function loadPresets() {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    return Array.isArray(data.presets) ? data.presets : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePresets() {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify({ format: 'lissajous-presets-v1', presets }));
+  } catch (e) {
+    showPresetStatus(`Save failed: ${e.message}`);
+  }
+}
+
+let presets = loadPresets();
+let presetIdx = presets.length - 1; // -1 when empty
+
+function modePresets() { return presets.filter(p => (p.mode || '2d') === '2d'); }
+
+// Tolerates a flatter {phiX, phiXY} shape alongside the nested 'phases' one.
+function presetPhases(p) { return p.phases || { phiX: p.phiX, phiXY: p.phiXY }; }
+
+function presetLabelText() {
+  const mp = modePresets();
+  if (!mp.length) return '(no saved presets)';
+  const p = mp[presetIdx];
+  return `${presetIdx + 1}/${mp.length}   ${p.name}`;
+}
+
+const presetNameEl = $('#presetName');
+const presetLabelEl = $('#presetLabel');
+const presetStatusEl = $('#presetStatus');
+const presetImportFileEl = $('#presetImportFile');
+const presetThumbEl = $('#presetThumb');
+const presetThumbLinkEl = $('#presetThumbLink');
+
+function showPresetStatus(msg) { presetStatusEl.textContent = msg; }
+
+function refreshPresetLabel() {
+  presetLabelEl.textContent = presetLabelText();
+  const mp = modePresets();
+  const p = mp[presetIdx];
+  if (p && p.image) {
+    presetThumbEl.src = p.image;
+    presetThumbEl.classList.add('shown');
+    presetThumbLinkEl.href = p.image;
+    presetThumbLinkEl.download = `${p.name}.png`;
+  } else {
+    presetThumbEl.classList.remove('shown');
+    presetThumbEl.removeAttribute('src');
+    presetThumbLinkEl.removeAttribute('href');
+  }
+}
+
+function applyPreset(p) {
+  state.notes = [...p.notes];
+  state.octs = [...p.octaves];
+  const ph = presetPhases(p);
+  state.phiX = ph.phiX;
+  state.phiXY = ph.phiXY;
+  state.temp = p.temperament;
+  slPx.value = state.phiX;
+  slPxy.value = state.phiXY;
+  tempDescEl.textContent = TEMP_DESCRIPTIONS[state.temp];
+  styleTempButtons();
+  fullRedraw();
+}
+
+function gotoPreset(step) {
+  const mp = modePresets();
+  if (!mp.length) return;
+  presetIdx = (presetIdx + step + mp.length) % mp.length;
+  applyPreset(mp[presetIdx]);
+  refreshPresetLabel();
+  showPresetStatus('');
+}
+
+function savePreset() {
+  const name = presetNameEl.value.trim() || `Preset ${modePresets().length + 1}`;
+  const freqs = [0, 1, 2, 3].map(i => noteFreq(state.notes[i], state.octs[i], state.temp));
+  let image;
+  try {
+    image = renderCurveSnapshot(freqs, state.phiX, state.phiXY);
+  } catch (e) {
+    image = null;
+  }
+  const preset = {
+    name, mode: '2d',
+    notes: [...state.notes], octaves: [...state.octs],
+    phases: { phiX: state.phiX, phiXY: state.phiXY },
+    temperament: state.temp,
+    created: new Date().toISOString(),
+  };
+  if (image) preset.image = image;
+  presets.push(preset);
+  presetIdx = modePresets().length - 1;
+  writePresets();
+  presetNameEl.value = '';
+  refreshPresetLabel();
+  showPresetStatus(image ? '' : 'Saved (snapshot image failed)');
+}
+
+function deletePreset() {
+  const mp = modePresets();
+  if (!mp.length) return;
+  const removed = mp[presetIdx];
+  presets = presets.filter(p => p !== removed);
+  presetIdx = Math.min(presetIdx, modePresets().length - 1);
+  writePresets();
+  refreshPresetLabel();
+}
+
+function downloadBlob(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportPresets() {
+  if (!presets.length) {
+    showPresetStatus('No presets to export');
+    return;
+  }
+  downloadBlob('lissajous_shared.json',
+    JSON.stringify({ format: 'lissajous-presets-v1', presets }, null, 2),
+    'application/json');
+  showPresetStatus(`Exported ${presets.length} preset(s)`);
+}
+
+function importPresetsFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let incoming;
+    try {
+      const data = JSON.parse(reader.result);
+      incoming = Array.isArray(data.presets) ? data.presets : [];
+    } catch (e) {
+      showPresetStatus(`Import failed: ${e.message}`);
+      return;
+    }
+    if (!incoming.length) {
+      showPresetStatus('No presets found in that file');
+      return;
+    }
+    const existingNames = new Set(presets.map(p => p.name));
+    let added = 0;
+    for (const p of incoming) {
+      let name = p.name || 'Imported preset';
+      if (existingNames.has(name)) {
+        let n = 2;
+        while (existingNames.has(`${name} (${n})`)) n++;
+        name = `${name} (${n})`;
+      }
+      presets.push({ ...p, name, mode: p.mode || '2d' });
+      existingNames.add(name);
+      added++;
+    }
+    presetIdx = modePresets().length - 1;
+    writePresets();
+    refreshPresetLabel();
+    showPresetStatus(`Imported ${added} preset(s)`);
+  };
+  reader.readAsText(file);
+}
+
+$('#presetSave').addEventListener('click', savePreset);
+$('#presetPrev').addEventListener('click', () => gotoPreset(-1));
+$('#presetNext').addEventListener('click', () => gotoPreset(1));
+$('#presetDelete').addEventListener('click', deletePreset);
+$('#presetExport').addEventListener('click', exportPresets);
+$('#presetImport').addEventListener('click', () => presetImportFileEl.click());
+presetImportFileEl.addEventListener('change', () => {
+  const file = presetImportFileEl.files[0];
+  if (file) importPresetsFromFile(file);
+  presetImportFileEl.value = '';
+});
+
+refreshPresetLabel();
 
 // ---------------------------------------------------------------------------
 // Init

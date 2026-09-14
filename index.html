@@ -143,6 +143,28 @@
   canvas#curve { background: var(--bg); border-radius: 4px; max-width: 100%; }
   .x-label { font-size: 10px; color: var(--x-col); margin-top: 3px; text-align: center; }
 
+  /* ---- presets row ---- */
+  .preset-row {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--dim); width: 100%;
+  }
+  .preset-input {
+    background: #0f1825; color: var(--white); border: 1px solid var(--btn-edge-off);
+    border-radius: 3px; padding: 5px 7px; font-size: 11px; width: 130px;
+  }
+  .preset-btn {
+    background: var(--btn-off); color: var(--white); border: 1px solid var(--accent);
+    border-radius: 3px; padding: 5px 9px; font-size: 11px; cursor: pointer;
+  }
+  .preset-btn:hover { background: #162840; }
+  .preset-label { font-size: 11px; font-weight: 700; color: #7a8fa8; min-width: 140px; text-align: center; }
+  .preset-thumb {
+    width: 30px; height: 30px; border-radius: 3px; border: 1px solid var(--accent);
+    object-fit: cover; background: var(--bg); display: none; vertical-align: middle;
+  }
+  .preset-thumb.shown { display: inline-block; }
+  .preset-status { font-size: 10.5px; color: #7a8fa8; font-style: italic; width: 100%; text-align: center; min-height: 1.3em; }
+
   footer { margin-top: 18px; font-size: 10.5px; color: #556677; text-align: center; }
   footer a { color: var(--accent); }
 
@@ -214,8 +236,24 @@
     <div class="slots-col" id="slotsRight"></div>
   </div>
 
+  <div class="preset-row">
+    <input type="text" class="preset-input" id="presetName" placeholder="preset name…">
+    <button class="preset-btn" id="presetSave">Save</button>
+    <button class="preset-btn" id="presetPrev">&#9664;</button>
+    <a id="presetThumbLink" target="_blank" rel="noopener" title="Open snapshot image">
+      <img id="presetThumb" class="preset-thumb" alt="">
+    </a>
+    <span class="preset-label" id="presetLabel"></span>
+    <button class="preset-btn" id="presetNext">&#9654;</button>
+    <button class="preset-btn" id="presetDelete">Delete</button>
+    <button class="preset-btn" id="presetExport">Export &uarr;</button>
+    <button class="preset-btn" id="presetImport">Import &darr;</button>
+    <input type="file" id="presetImportFile" accept="application/json" hidden>
+  </div>
+  <div class="preset-status" id="presetStatus"></div>
+
   <footer>
-    Web port of the <a href="https://github.com/willmskinner/lissajous-keyboard-interface" target="_blank" rel="noopener">Python original</a>
+    Web port of the <a href="https://github.com/willmskinner/lissajous/tree/master" target="_blank" rel="noopener">Python original</a>
     &nbsp;&middot;&nbsp; MIDI &amp; audio require a browser with Web MIDI / Web Audio support (Chrome / Edge recommended)
   </footer>
 </div>
