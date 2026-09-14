@@ -827,6 +827,112 @@ function renderCube3DSnapshot(freqs, phiY, phiZ, size = 480) {
   return off.toDataURL('image/png');
 }
 
+// ---------------------------------------------------------------------------
+// 3D-print export — turns the curve into a solid tube (so it has enough
+// structural integrity to print) and writes it out as a binary STL, the
+// format nearly every slicer (Cura, PrusaSlicer, Bambu Studio, …) expects.
+// ---------------------------------------------------------------------------
+const STL_WORLD_SCALE = 40;   // mm per unit — curve spans roughly ±1, so ~80mm overall
+const STL_TUBE_RADIUS = 1.5;  // mm — ~3mm diameter, sturdy enough for FDM printing
+const STL_TUBE_SIDES = 12;    // cross-section polygon
+const STL_SAMPLE_EVERY = 6;   // thin N_POINTS_3D down to a print-friendly vertex count
+
+function v3sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function v3add(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function v3scale(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function v3dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function v3cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function v3norm(a) {
+  const len = Math.hypot(a[0], a[1], a[2]) || 1e-9;
+  return [a[0] / len, a[1] / len, a[2] / len];
+}
+
+// Tangent at each point of a closed polyline, from its two neighbors.
+function tubeTangents(pts) {
+  const n = pts.length;
+  return pts.map((_, i) => v3norm(v3sub(pts[(i + 1) % n], pts[(i - 1 + n) % n])));
+}
+
+// Rotation-minimizing frame (Wang/Jüttler/Zheng/Liu "double reflection"
+// method) — propagates a normal vector along the curve without the twist
+// per-segment Frenet frames would introduce, which is what keeps the tube's
+// cross-section from corkscrewing as it bends.
+function tubeRotationMinimizingNormals(pts, tangents) {
+  const n = pts.length;
+  const normals = new Array(n);
+  const arbitrary = Math.abs(tangents[0][1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  normals[0] = v3norm(v3cross(tangents[0], arbitrary));
+  for (let i = 0; i < n - 1; i++) {
+    const v1 = v3sub(pts[i + 1], pts[i]);
+    const c1 = v3dot(v1, v1) || 1e-12;
+    const rL = v3sub(normals[i], v3scale(v1, (2 * v3dot(v1, normals[i])) / c1));
+    const tL = v3sub(tangents[i], v3scale(v1, (2 * v3dot(v1, tangents[i])) / c1));
+    const v2 = v3sub(tangents[i + 1], tL);
+    const c2 = v3dot(v2, v2) || 1e-12;
+    normals[i + 1] = v3norm(v3sub(rL, v3scale(v2, (2 * v3dot(v2, rL)) / c2)));
+  }
+  return normals;
+}
+
+// Sweeps a `sides`-gon of the given radius around the closed centerline,
+// producing a closed watertight tube (no end caps needed — the curve
+// already loops back on itself after one Lissajous period).
+function buildTubeTriangles(centerline, radius, sides) {
+  const n = centerline.length;
+  const tangents = tubeTangents(centerline);
+  const normals = tubeRotationMinimizingNormals(centerline, tangents);
+  const rings = centerline.map((p, i) => {
+    const binormal = v3cross(tangents[i], normals[i]);
+    const ring = new Array(sides);
+    for (let s = 0; s < sides; s++) {
+      const theta = (s / sides) * 2 * Math.PI;
+      const offset = v3add(v3scale(normals[i], Math.cos(theta) * radius), v3scale(binormal, Math.sin(theta) * radius));
+      ring[s] = v3add(p, offset);
+    }
+    return ring;
+  });
+
+  const triangles = [];
+  for (let i = 0; i < n; i++) {
+    const ringA = rings[i], ringB = rings[(i + 1) % n];
+    for (let s = 0; s < sides; s++) {
+      const s2 = (s + 1) % sides;
+      triangles.push([ringA[s], ringA[s2], ringB[s2]]);
+      triangles.push([ringA[s], ringB[s2], ringB[s]]);
+    }
+  }
+  return triangles;
+}
+
+function trianglesToBinarySTL(triangles) {
+  const buf = new ArrayBuffer(84 + 50 * triangles.length);
+  const view = new DataView(buf);
+  view.setUint32(80, triangles.length, true);
+  let offset = 84;
+  for (const [a, b, c] of triangles) {
+    const n = v3norm(v3cross(v3sub(b, a), v3sub(c, a)));
+    for (const component of n) { view.setFloat32(offset, component, true); offset += 4; }
+    for (const vert of [a, b, c]) {
+      for (const component of vert) { view.setFloat32(offset, component, true); offset += 4; }
+    }
+    view.setUint16(offset, 0, true); offset += 2; // unused "attribute byte count"
+  }
+  return buf;
+}
+
+function export3DPrintSTL() {
+  if (!_last3D) return;
+  const [xs, ys, zs] = _last3D;
+  const centerline = [];
+  for (let i = 0; i < xs.length; i += STL_SAMPLE_EVERY) {
+    centerline.push([xs[i] * STL_WORLD_SCALE, ys[i] * STL_WORLD_SCALE, zs[i] * STL_WORLD_SCALE]);
+  }
+  const triangles = buildTubeTriangles(centerline, STL_TUBE_RADIUS, STL_TUBE_SIDES);
+  downloadBlob('lissajous_3d.stl', trianglesToBinarySTL(triangles), 'model/stl');
+}
+
 // ---- drag-to-rotate (shared by the inline cube canvas and the visualizer) ----
 function attachDragToRotate(canvas, onRotate) {
   let dragging = false, lastX = 0, lastY = 0;
@@ -976,6 +1082,9 @@ rotateToggleBtn.addEventListener('click', () => {
   state3d.autoRotate = !state3d.autoRotate;
   rotateToggleBtn.classList.toggle('on', state3d.autoRotate);
 });
+
+const exportStlBtn = $('#exportStlBtn');
+exportStlBtn.addEventListener('click', export3DPrintSTL);
 
 setInterval(() => {
   const st = activeState();
@@ -1492,6 +1601,7 @@ function setMode(newMode) {
   mode = newMode;
   mode2DEl.hidden = mode !== '2d';
   mode3DEl.hidden = mode !== '3d';
+  exportStlBtn.hidden = mode !== '3d';
   modeToggleBtn.textContent = mode === '2d' ? '3D View →' : '2D View →';
   pageTitleEl.textContent = mode === '2d'
     ? '4-NOTE LISSAJOUS CURVE · KEYBOARD INTERFACE'
