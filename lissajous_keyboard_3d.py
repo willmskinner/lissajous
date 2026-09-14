@@ -207,19 +207,16 @@ def build_ui(fig, ctx):
     _curve_3d = _gradient_line3d(np.zeros(2), np.zeros(2), np.zeros(2))
     ax_3d.add_collection3d(_curve_3d)
 
-    # Unobtrusive labels painted flat onto the cube's own faces — plain
-    # billboard 3D text with a manual screen-space rotation (matplotlib's
-    # zdir-based auto-orientation didn't read as flat-on-the-face), turned
-    # to roughly match each pane's rendered slant at this fixed view_init
-    # (elev=22, azim=-60): the floor is the z=-1.15 pane, the left wall is
-    # x=-1.15, the right wall is y=+1.15.
+    # Unobtrusive labels painted flat onto the cube's own faces. zdir names
+    # the in-plane axis to align the text's baseline with (NOT the face's
+    # normal axis — that would run near-perpendicular to the face); this
+    # makes matplotlib recompute the on-screen angle from the live camera
+    # every draw, so the label stays parallel to that edge as you drag to
+    # rotate the plot, instead of a rotation baked in for one fixed view.
     _face_label_kw = dict(color='#7a8fa8', fontsize=8, ha='center', va='center')
-    # Rotations measured directly off this view_init's actual projection —
-    # the angle, in display space, of each face's more-horizontal pair of
-    # boundary edges (the pane border lines running above/below the label).
-    ax_3d.text(0, 0, -1.32, 'X–Z', rotation=-13.7, **_face_label_kw)   # floor   ("top view" side)
-    ax_3d.text(-1.32, 0, 0, 'Y–Z', rotation=30.5,  **_face_label_kw)   # left wall
-    ax_3d.text(0, 1.32, 0, 'X–Y', rotation=-11.5,  **_face_label_kw)   # right wall ("front view" side)
+    ax_3d.text(0, 0, -1.32, 'X–Z', zdir='x', **_face_label_kw)   # floor      ("top view" side)
+    ax_3d.text(-1.32, 0, 0, 'Y–Z', zdir='y', **_face_label_kw)   # left wall
+    ax_3d.text(0, 1.32, 0, 'X–Y', zdir='x',  **_face_label_kw)   # right wall ("front view" side)
 
     LOWER_X = 0.805
     UPPER_H = LOWER_H = 0.2825
