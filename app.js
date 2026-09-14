@@ -256,7 +256,6 @@ const slotsLeftEl = $('#slotsLeft');
 const slotsRightEl = $('#slotsRight');
 const curveCanvas = $('#curve');
 const curveCtx = curveCanvas.getContext('2d');
-const curveTitleEl = $('#curveTitle');
 const xLabelEl = $('#xLabel');
 const yLabelEl = $('#yLabel');
 const tempRowEl = $('#tempRow');
@@ -601,7 +600,6 @@ function updateCurveFull() {
   const iyS = iy ? ` – ${iy}` : '';
   xLabelEl.textContent = `${state.notes[0]}${state.octs[0]} (${f1.toFixed(1)} Hz) + ${state.notes[1]}${state.octs[1]} (${f2.toFixed(1)} Hz)   [${rx}${ixS}]`;
   yLabelEl.textContent = `${state.notes[2]}${state.octs[2]} (${f3.toFixed(1)} Hz) + ${state.notes[3]}${state.octs[3]} (${f4.toFixed(1)} Hz)   [${ry}${iyS}]`;
-  curveTitleEl.textContent = state.temp;
 
   if (audioEngine.on) audioEngine.setFreqs(freqs);
   return freqs;
@@ -673,7 +671,6 @@ for (let i = 0; i < 8; i++) {
 
 const cube3dCanvas = $('#cube3d');
 const cube3dCtx = cube3dCanvas.getContext('2d');
-const cube3dTitleEl = $('#cube3dTitle');
 let CUBE_SIZE = 480; // logical (CSS-pixel) canvas size; kept in sync by resizeCube3D()
 
 function cubeToScreen(px, py, size = CUBE_SIZE) {
@@ -785,7 +782,6 @@ function updateCube3DFull() {
   projTopTitleEl.textContent   = `TOP (X–Z)   [${rxz}${ixz ? ` – ${ixz}` : ''}]`;
   projFrontTitleEl.textContent = `FRONT (X–Y)   [${rxy}${ixy ? ` – ${ixy}` : ''}]`;
   projSideTitleEl.textContent  = `SIDE (Y–Z)   [${ryz}${iyz ? ` – ${iyz}` : ''}]`;
-  cube3dTitleEl.textContent = state3d.temp;
 
   if (audioEngine.on) audioEngine.setFreqs(freqs);
 }
@@ -1459,7 +1455,10 @@ function writePresets() {
 }
 
 let presets = loadPresets();
-let presetIdx = presets.length - 1; // -1 when empty
+// -1 when empty. Must count only the *current mode's* presets (modePresets()),
+// not presets.length — with a mix of saved 2D and 3D presets, indexing the
+// filtered list with an unfiltered count could point past its end.
+let presetIdx = modePresets().length - 1;
 
 function modePresets() { return presets.filter(p => (p.mode || '2d') === mode); }
 
@@ -1675,9 +1674,7 @@ function setMode(newMode) {
   mode3DEl.hidden = mode !== '3d';
   exportStlBtn.hidden = mode !== '3d';
   modeToggleBtn.textContent = mode === '2d' ? '3D View →' : '2D View →';
-  pageTitleEl.textContent = mode === '2d'
-    ? '4-NOTE LISSAJOUS CURVE · KEYBOARD INTERFACE'
-    : '3-NOTE LISSAJOUS CURVE · 3D';
+  pageTitleEl.textContent = mode === '2d' ? '2D LISSAJOUS CURVE' : '3D LISSAJOUS CURVE';
   phiLabelAEl.textContent = mode === '2d' ? 'φ inner X' : 'φ Y';
   phiLabelBEl.textContent = mode === '2d' ? 'φ X vs Y' : 'φ Z';
   pianoHintEl.innerHTML = mode === '2d' ? HINT_2D : HINT_3D;

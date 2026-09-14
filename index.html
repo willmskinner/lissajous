@@ -165,7 +165,6 @@
   .slot .s-status { font-size: 9px; font-weight: 700; color: #2a3a4a; margin-top: 2px; }
 
   .curve-wrap { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; min-width: 0; }
-  .curve-title { font-size: 12px; color: var(--white); margin-bottom: 2px; }
   .curve-mid { display: flex; align-items: center; width: 100%; justify-content: center; }
   .y-label {
     writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; color: var(--y-col);
@@ -237,7 +236,7 @@
 <body>
 
 <div class="title-row">
-  <h1 id="pageTitle">4-NOTE LISSAJOUS CURVE &nbsp;·&nbsp; KEYBOARD INTERFACE</h1>
+  <h1 id="pageTitle">2D LISSAJOUS CURVE</h1>
   <div class="title-btn-group">
     <button class="mode-toggle-btn" id="vizToggle" title="Full-screen visualizer">&#9974; Visualizer</button>
     <button class="mode-toggle-btn" id="modeToggle">3D View &rarr;</button>
@@ -254,7 +253,6 @@
   <div class="main-row" id="mode2D">
     <div class="slots-col" id="slotsLeft"></div>
     <div class="curve-wrap">
-      <div class="curve-title" id="curveTitle"></div>
       <div class="curve-mid">
         <div class="y-label" id="yLabel"></div>
         <canvas id="curve" width="560" height="560"></canvas>
@@ -271,7 +269,6 @@
       <canvas class="proj-canvas" id="projSide" width="220" height="220"></canvas>
     </div>
     <div class="cube3d-wrap">
-      <div class="curve-title" id="cube3dTitle"></div>
       <div class="cube3d-canvas-wrap">
         <canvas id="cube3d" width="480" height="480"></canvas>
         <button class="anim-btn rotate-toggle-btn" id="rotateToggle" title="Auto-rotate cube">&#8635;</button>
