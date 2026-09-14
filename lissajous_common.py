@@ -703,16 +703,19 @@ def unique_image_path(name):
 # App orchestrator — owns the resources that must survive a mode toggle
 # ─────────────────────────────────────────────────────────────────────────────
 
+def track_widget(ctx, widget):
+    """Every Button/Slider/TextBox a module creates must be passed through
+    this so teardown_ui() can properly disconnect it before a mode switch.
+    Returns the widget unchanged, so it's meant to wrap the constructor
+    call directly: `sl_px = track_widget(ctx, Slider(...))`."""
+    ctx.setdefault('_widgets', []).append(widget)
+    return widget
+
+
 def teardown_ui(fig, ctx):
-    """Disconnect the previous mode's event handlers/timers before rebuilding
-    the figure for a different mode. Leaves the audio subprocess, MIDI
-    thread/queue, and preset library untouched — those are shared via ctx."""
-    for cid in ctx.get('_cids', []):
-        try:
-            fig.canvas.mpl_disconnect(cid)
-        except Exception:
-            pass
-    ctx['_cids'] = []
+    """Tear down the previous mode's UI before rebuilding the figure for a
+    different mode. Leaves the audio subprocess, MIDI thread/queue, and
+    preset library untouched — those are shared via ctx."""
     timer = ctx.get('_timer')
     if timer is not None:
         try:
@@ -720,6 +723,43 @@ def teardown_ui(fig, ctx):
         except Exception:
             pass
         ctx['_timer'] = None
+
+    # Every widget (Button/Slider/TextBox/...) independently connects its own
+    # button/key/motion handlers straight onto the canvas's callback registry
+    # when constructed. fig.clf() removes axes from the *figure*, but has no
+    # idea those per-widget connections exist, so it doesn't disconnect them —
+    # left alone, the previous mode's now-invisible widgets keep firing on
+    # clicks at their old screen coordinates forever, racing whatever the new
+    # mode places at the same spot. That includes each Button's own mouse
+    # grab-on-press: two "different" (one real, one ghost) Axes both try to
+    # grab the mouse for the same click, and the second one raises "Another
+    # Axes already grabs mouse input" — the freeze this was written to fix.
+    #
+    # Each module registers every widget it creates via track_widget(ctx, w)
+    # so it ends up in ctx['_widgets']; disconnect_events() is the widget's
+    # own sanctioned cleanup (it knows exactly which cids are its). Note:
+    # do NOT reach into fig.canvas.callbacks.callbacks directly (e.g. to
+    # .clear() it) — that dict is guarded by weakref finalizers, and mutating
+    # it outside the registry's own disconnect() corrupts their bookkeeping,
+    # breaking *other* still-live widgets in subtle ways.
+    for w in ctx.get('_widgets', []):
+        try:
+            w.disconnect_events()
+        except Exception:
+            pass
+    ctx['_widgets'] = []
+    for cid in ctx.get('_cids', []):
+        try:
+            fig.canvas.mpl_disconnect(cid)
+        except Exception:
+            pass
+    ctx['_cids'] = []
+    grabber = getattr(fig.canvas, 'mouse_grabber', None)
+    if grabber is not None:
+        try:
+            fig.canvas.release_mouse(grabber)
+        except Exception:
+            pass
     fig.clf()
 
 
@@ -743,6 +783,7 @@ def run_app(initial_mode='2d'):
         'tone':         'sine',
         'vol':          0.25,
         '_cids':        [],
+        '_widgets':     [],
         '_timer':       None,
     }
 
@@ -763,5 +804,8 @@ def run_app(initial_mode='2d'):
         m.build_ui(fig, ctx)
 
     _build(initial_mode)
+    # Connected once, outside _build/teardown_ui's reach, so it survives
+    # every mode switch and fires whichever mode is active when the window
+    # actually closes.
     fig.canvas.mpl_connect('close_event', lambda _e: ctx['audio_engine'].close())
     plt.show()

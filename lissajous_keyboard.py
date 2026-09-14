@@ -250,17 +250,17 @@ def build_ui(fig, ctx):
            ha='center', va='bottom', color='#7a8fa8', fontsize=7)
 
     # Phase sliders
-    sl_px  = Slider(ax_px,  'φ inner X ', 0, 2 * np.pi,
-                    valinit=state['phi_x'],  color='#996633')
-    sl_pxy = Slider(ax_pxy, 'φ X vs Y ',  0, 2 * np.pi,
-                    valinit=state['phi_xy'], color='#664499')
+    sl_px  = lc.track_widget(ctx, Slider(ax_px,  'φ inner X ', 0, 2 * np.pi,
+                    valinit=state['phi_x'],  color='#996633'))
+    sl_pxy = lc.track_widget(ctx, Slider(ax_pxy, 'φ X vs Y ',  0, 2 * np.pi,
+                    valinit=state['phi_xy'], color='#664499'))
     for sl in (sl_px, sl_pxy):
         sl.label.set_color(lc.WHITE)
         sl.valtext.set_color(lc.WHITE)
 
     # Animate buttons (one per slider, at the outer edges)
-    btn_anim_px  = Button(ax_anim_px,  '▶', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_anim_pxy = Button(ax_anim_pxy, '▶', color=lc.BTN_OFF, hovercolor='#162840')
+    btn_anim_px  = lc.track_widget(ctx, Button(ax_anim_px,  '▶', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_anim_pxy = lc.track_widget(ctx, Button(ax_anim_pxy, '▶', color=lc.BTN_OFF, hovercolor='#162840'))
     for btn in (btn_anim_px, btn_anim_pxy):
         btn.label.set_color(lc.WHITE)
         btn.label.set_fontsize(12)
@@ -270,7 +270,7 @@ def build_ui(fig, ctx):
             sp.set_linewidth(0.5)
 
     # Mode toggle button
-    btn_mode = Button(ax_mode, '3D View →', color=lc.BTN_OFF, hovercolor='#162840')
+    btn_mode = lc.track_widget(ctx, Button(ax_mode, '3D View →', color=lc.BTN_OFF, hovercolor='#162840'))
     btn_mode.label.set_fontsize(8)
     btn_mode.label.set_color(lc.WHITE)
     for sp in ax_mode.spines.values():
@@ -279,11 +279,11 @@ def build_ui(fig, ctx):
 
     # Audio controls
     _AUDIO_TONE_NAMES = [('sine', 'Sine'), ('epiano', 'E. Piano'), ('piano', 'Piano')]
-    btn_aud_on   = Button(ax_aud_on,   '♪  off', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_aud_sine = Button(ax_aud_sine, 'Sine',    color=lc.BTN_OFF, hovercolor='#162840')
-    btn_aud_ep   = Button(ax_aud_ep,   'E. Piano',color=lc.BTN_OFF, hovercolor='#162840')
-    btn_aud_pno  = Button(ax_aud_pno,  'Piano',   color=lc.BTN_OFF, hovercolor='#162840')
-    sl_vol = Slider(ax_vol, 'Vol', 0.0, 1.0, valinit=ctx['vol'], color='#2a5a3a')
+    btn_aud_on   = lc.track_widget(ctx, Button(ax_aud_on,   '♪  off', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_aud_sine = lc.track_widget(ctx, Button(ax_aud_sine, 'Sine',    color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_aud_ep   = lc.track_widget(ctx, Button(ax_aud_ep,   'E. Piano',color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_aud_pno  = lc.track_widget(ctx, Button(ax_aud_pno,  'Piano',   color=lc.BTN_OFF, hovercolor='#162840'))
+    sl_vol = lc.track_widget(ctx, Slider(ax_vol, 'Vol', 0.0, 1.0, valinit=ctx['vol'], color='#2a5a3a'))
     sl_vol.label.set_color(lc.WHITE)
     sl_vol.valtext.set_color(lc.WHITE)
 
@@ -330,7 +330,7 @@ def build_ui(fig, ctx):
     # Temperament buttons
     btns = []
     for i, name in enumerate(lc.TEMP_NAMES):
-        btn = Button(btn_axs[i], name, color=lc.BTN_OFF, hovercolor='#162840')
+        btn = lc.track_widget(ctx, Button(btn_axs[i], name, color=lc.BTN_OFF, hovercolor='#162840'))
         btn.label.set_fontsize(8.5)
         btns.append(btn)
     lc.style_temp_buttons(btn_axs, btns, lc.TEMP_NAMES.index(state['temp']))
@@ -350,17 +350,17 @@ def build_ui(fig, ctx):
             sp.set_edgecolor(lc.BTN_EDGE_OFF)
             sp.set_linewidth(0.8)
 
-    name_box = TextBox(ax_preset_name, '', initial='', textalignment='left')
-    btn_preset_save = Button(ax_preset_save, 'Save', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_preset_prev = Button(ax_preset_prev, '◀', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_preset_next = Button(ax_preset_next, '▶', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_preset_del  = Button(ax_preset_del,  'Delete', color=lc.BTN_OFF, hovercolor='#162840')
-    path_box = TextBox(ax_preset_path, '',
+    name_box = lc.track_widget(ctx, TextBox(ax_preset_name, '', initial='', textalignment='left'))
+    btn_preset_save = lc.track_widget(ctx, Button(ax_preset_save, 'Save', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_preset_prev = lc.track_widget(ctx, Button(ax_preset_prev, '◀', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_preset_next = lc.track_widget(ctx, Button(ax_preset_next, '▶', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_preset_del  = lc.track_widget(ctx, Button(ax_preset_del,  'Delete', color=lc.BTN_OFF, hovercolor='#162840'))
+    path_box = lc.track_widget(ctx, TextBox(ax_preset_path, '',
                         initial=os.path.expanduser('~/lissajous_shared.json'),
-                        textalignment='left')
-    btn_preset_browse = Button(ax_preset_brow, 'Browse…', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_preset_export = Button(ax_preset_exp,  'Export ↑', color=lc.BTN_OFF, hovercolor='#162840')
-    btn_preset_import = Button(ax_preset_imp,  'Import ↓', color=lc.BTN_OFF, hovercolor='#162840')
+                        textalignment='left'))
+    btn_preset_browse = lc.track_widget(ctx, Button(ax_preset_brow, 'Browse…', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_preset_export = lc.track_widget(ctx, Button(ax_preset_exp,  'Export ↑', color=lc.BTN_OFF, hovercolor='#162840'))
+    btn_preset_import = lc.track_widget(ctx, Button(ax_preset_imp,  'Import ↓', color=lc.BTN_OFF, hovercolor='#162840'))
 
     for ax in (ax_preset_name, ax_preset_path):
         _style_textbox(ax)
