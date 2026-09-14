@@ -27,6 +27,7 @@
     --note1: #ffbb44;
     --note2: #44ddbb;
     --note3: #4499ff;
+    --z-col: #66ffaa;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -37,14 +38,24 @@
   body { display: flex; flex-direction: column; align-items: center; padding: 10px 8px 24px; min-height: 100vh; }
 
   h1 {
-    font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin: 4px 0 10px;
+    font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin: 0;
     text-align: center;
   }
+  .title-row {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    width: 100%; max-width: 1080px; margin: 4px 0 10px; position: relative;
+  }
+  .mode-toggle-btn {
+    background: var(--btn-off); color: var(--white); border: 1px solid var(--accent);
+    border-radius: 3px; padding: 5px 10px; font-size: 11px; cursor: pointer;
+    position: absolute; right: 0;
+  }
+  .mode-toggle-btn:hover { background: #162840; }
 
-  .panel { width: 100%; max-width: 980px; }
+  .panel { width: 100%; max-width: 1080px; }
 
   /* ---- temperament row ---- */
-  .temp-row { display: flex; gap: 3px; width: 100%; }
+  .temp-row { display: flex; gap: 3px; width: 100%; margin-top: 14px; }
   .temp-btn {
     flex: 1 1 0; background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off);
     border-radius: 3px; padding: 5px 2px; font-size: 11px; cursor: pointer; white-space: nowrap;
@@ -88,7 +99,7 @@
   .midi-status { text-align: center; font-size: 11px; font-style: italic; color: #556677; margin: 4px 0; min-height: 1.4em; }
 
   /* ---- piano ---- */
-  .piano-hint { text-align: center; font-size: 10.5px; color: #7a8fa8; margin-bottom: 4px; padding: 0 4px; }
+  .piano-hint { text-align: center; font-size: 10.5px; color: #7a8fa8; margin: 14px 0 4px; padding: 0 4px; }
   .piano-scroll { width: 100%; overflow-x: auto; padding-bottom: 4px; }
   .piano {
     position: relative; height: 108px; background: var(--bg); border: 1px solid var(--dim);
@@ -168,18 +179,90 @@
   footer { margin-top: 18px; font-size: 10.5px; color: #556677; text-align: center; }
   footer a { color: var(--accent); }
 
+  /* ---- 3D mode ---- */
+  .main-row-3d {
+    display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px;
+    justify-content: center; flex-wrap: wrap;
+  }
+  .slots-col-3d { display: flex; flex-direction: column; gap: 6px; width: 104px; flex: 0 0 auto; }
+  .slots-col-3d .slot { min-height: 92px; }
+  .cube3d-wrap { display: flex; flex-direction: column; align-items: center; }
+  canvas#cube3d {
+    background: var(--bg); border-radius: 4px; cursor: grab; touch-action: none; max-width: 100%;
+  }
+  canvas#cube3d:active { cursor: grabbing; }
+  .proj-stack { display: flex; flex-direction: column; gap: 8px; }
+  .proj-panel { display: flex; flex-direction: column; align-items: center; }
+  .proj-title { font-size: 9.5px; color: #7a8fa8; margin-bottom: 2px; text-align: center; }
+  canvas.proj-canvas { background: var(--bg); border: 1px solid var(--dim); border-radius: 4px; }
+
+  /* .main-row/.main-row-3d set display:flex at the same specificity as the
+     browser's built-in [hidden] rule, so plain `hidden` loses the cascade —
+     these overrides make sure the toggle actually swaps sections instead of
+     stacking both. */
+  #mode2D[hidden], #mode3D[hidden] { display: none; }
+
   @media (max-width: 720px) {
     .main-row { flex-direction: column; align-items: center; }
     .slots-col { flex-direction: row; width: 100%; }
     canvas#curve { width: 92vw; height: 92vw; }
+    .main-row-3d { flex-direction: column; }
+    .slots-col-3d { flex-direction: row; width: 100%; }
+    canvas#cube3d { width: 88vw; height: 88vw; }
   }
 </style>
 </head>
 <body>
 
-<h1>4-NOTE LISSAJOUS CURVE &nbsp;·&nbsp; KEYBOARD INTERFACE</h1>
+<div class="title-row">
+  <h1 id="pageTitle">4-NOTE LISSAJOUS CURVE &nbsp;·&nbsp; KEYBOARD INTERFACE</h1>
+  <button class="mode-toggle-btn" id="modeToggle">3D View &rarr;</button>
+</div>
 
 <div class="panel">
+  <div class="main-row" id="mode2D">
+    <div class="slots-col" id="slotsLeft"></div>
+    <div class="curve-wrap">
+      <div class="curve-title" id="curveTitle"></div>
+      <div class="curve-mid">
+        <div class="y-label" id="yLabel"></div>
+        <canvas id="curve" width="560" height="560"></canvas>
+      </div>
+      <div class="x-label" id="xLabel"></div>
+    </div>
+    <div class="slots-col" id="slotsRight"></div>
+  </div>
+
+  <div class="main-row-3d" id="mode3D" hidden>
+    <div class="slots-col-3d" id="slots3D"></div>
+    <div class="proj-panel">
+      <div class="proj-title" id="projSideTitle">SIDE (Y&ndash;Z)</div>
+      <canvas class="proj-canvas" id="projSide" width="220" height="220"></canvas>
+    </div>
+    <div class="cube3d-wrap">
+      <div class="curve-title" id="cube3dTitle"></div>
+      <canvas id="cube3d" width="480" height="480"></canvas>
+    </div>
+    <div class="proj-stack">
+      <div class="proj-panel">
+        <div class="proj-title" id="projTopTitle">TOP (X&ndash;Z)</div>
+        <canvas class="proj-canvas" id="projTop" width="200" height="200"></canvas>
+      </div>
+      <div class="proj-panel">
+        <div class="proj-title" id="projFrontTitle">FRONT (X&ndash;Y)</div>
+        <canvas class="proj-canvas" id="projFront" width="200" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="piano-hint" id="pianoHint">
+    Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp;
+    [ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot &nbsp;&middot;&nbsp; Space = sound on/off
+  </div>
+  <div class="piano-scroll">
+    <div class="piano" id="piano"></div>
+  </div>
+
   <div class="temp-row" id="tempRow"></div>
   <div class="temp-label">T E M P E R A M E N T</div>
   <div class="temp-desc" id="tempDesc"></div>
@@ -188,7 +271,7 @@
     <div class="phase-ctrl">
       <button class="anim-btn" id="animPx">&#9654;</button>
       <div class="slider-block">
-        <label>&phi; inner X</label>
+        <label id="phiLabelA">&phi; inner X</label>
         <input type="range" id="slPx" min="0" max="6.283185307" step="0.001" value="0">
       </div>
     </div>
@@ -206,7 +289,7 @@
 
     <div class="phase-ctrl pxy-ctrl">
       <div class="slider-block pxy">
-        <label>&phi; X vs Y</label>
+        <label id="phiLabelB">&phi; X vs Y</label>
         <input type="range" id="slPxy" min="0" max="6.283185307" step="0.001" value="0.785398163">
       </div>
       <button class="anim-btn" id="animPxy">&#9654;</button>
@@ -214,27 +297,6 @@
   </div>
 
   <div class="midi-status" id="midiStatus"></div>
-
-  <div class="piano-hint">
-    Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp;
-    [ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot &nbsp;&middot;&nbsp; Space = sound on/off
-  </div>
-  <div class="piano-scroll">
-    <div class="piano" id="piano"></div>
-  </div>
-
-  <div class="main-row">
-    <div class="slots-col" id="slotsLeft"></div>
-    <div class="curve-wrap">
-      <div class="curve-title" id="curveTitle"></div>
-      <div class="curve-mid">
-        <div class="y-label" id="yLabel"></div>
-        <canvas id="curve" width="560" height="560"></canvas>
-      </div>
-      <div class="x-label" id="xLabel"></div>
-    </div>
-    <div class="slots-col" id="slotsRight"></div>
-  </div>
 
   <div class="preset-row">
     <input type="text" class="preset-input" id="presetName" placeholder="preset name…">
