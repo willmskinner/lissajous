@@ -753,12 +753,17 @@ function renderCube3DToCtx(ctx, size, x, y, z, rot = rot3D, opts = {}) {
   }
 }
 
-const projTopCtx = $('#projTop').getContext('2d');
-const projFrontCtx = $('#projFront').getContext('2d');
-const projSideCtx = $('#projSide').getContext('2d');
+const projTopCanvas = $('#projTop');
+const projFrontCanvas = $('#projFront');
+const projSideCanvas = $('#projSide');
+const projTopCtx = projTopCanvas.getContext('2d');
+const projFrontCtx = projFrontCanvas.getContext('2d');
+const projSideCtx = projSideCanvas.getContext('2d');
 const projTopTitleEl = $('#projTopTitle');
 const projFrontTitleEl = $('#projFrontTitle');
 const projSideTitleEl = $('#projSideTitle');
+let PROJ_TOPFRONT_SIZE = 200; // logical (CSS-pixel) canvas size; kept in sync by resizeCube3DRow()
+let PROJ_SIDE_SIZE = 220;
 
 let _last3D = null; // cached [x,y,z] so drag-rotate doesn't recompute the curve
 
@@ -769,9 +774,9 @@ function updateCube3DFull() {
 
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
   syncViz();
-  renderCurveToCtx(projTopCtx, 200, 200, x, z);
-  renderCurveToCtx(projFrontCtx, 200, 200, x, y);
-  renderCurveToCtx(projSideCtx, 220, 220, y, z);
+  renderCurveToCtx(projTopCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, z);
+  renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
+  renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
 
   const [fx, fy, fz] = freqs;
   const [rxy, ixy] = describeRatio(fx, fy);
@@ -793,9 +798,9 @@ function updateCube3DFast() {
   _last3D = [x, y, z];
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
   syncViz();
-  renderCurveToCtx(projTopCtx, 200, 200, x, z);
-  renderCurveToCtx(projFrontCtx, 200, 200, x, y);
-  renderCurveToCtx(projSideCtx, 220, 220, y, z);
+  renderCurveToCtx(projTopCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, z);
+  renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
+  renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
   if (audioEngine.on) audioEngine.setFreqs(freqs);
 }
 
@@ -954,16 +959,76 @@ function attachDragToRotate(canvas, onRotate) {
 }
 attachDragToRotate(cube3dCanvas, redrawCube3DRotationOnly);
 
+// Base (1x) widths of the 3D row's four elements — matches the .slots-col-3d/
+// canvas sizes in the CSS/HTML — plus the row's fixed (unscaled) gap. Scaling
+// all four by the same factor keeps their proportions to each other while
+// making the whole row exactly as wide as the piano/panel above it, so the
+// note slots line up with the keyboard's left edge and the TOP/FRONT stack
+// lines up with its right edge.
+const CUBE3D_BASE_SLOTS_W = 104;
+const CUBE3D_BASE_SIDE = 220;
+const CUBE3D_BASE_CUBE = 480;
+const CUBE3D_BASE_TOPFRONT = 200;
+const CUBE3D_ROW_GAP = 10;
+const CUBE3D_BASE_TOTAL =
+  CUBE3D_BASE_SLOTS_W + CUBE3D_BASE_SIDE + CUBE3D_BASE_CUBE + CUBE3D_BASE_TOPFRONT + 3 * CUBE3D_ROW_GAP;
+
+// Below this the CSS switches .main-row-3d to a stacked mobile layout (see
+// the @media rule) — matches that breakpoint exactly.
+const CUBE3D_MOBILE_BREAKPOINT = 720;
+
 function resizeCube3D() {
-  const wrap = cube3dCanvas.parentElement;
-  const size = Math.min(480, wrap.clientWidth || 480);
   const dpr = window.devicePixelRatio || 1;
-  CUBE_SIZE = size;
-  cube3dCanvas.style.width = `${size}px`;
-  cube3dCanvas.style.height = `${size}px`;
-  cube3dCanvas.width = size * dpr;
-  cube3dCanvas.height = size * dpr;
-  cube3dCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  function sizeCanvas(canvas, ctx, size) {
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  if (window.innerWidth <= CUBE3D_MOBILE_BREAKPOINT) {
+    // Let the mobile CSS govern (vw-based cube, full-width note slots)
+    // instead of the desktop proportional scaling below — clear any inline
+    // sizes a wider layout may have left behind, then just keep each
+    // canvas's pixel buffer crisp at whatever size the CSS gives it.
+    slots3DEl.style.width = '';
+    for (const [canvas, ctx, base] of [
+      [cube3dCanvas, cube3dCtx, CUBE3D_BASE_CUBE],
+      [projSideCanvas, projSideCtx, CUBE3D_BASE_SIDE],
+      [projTopCanvas, projTopCtx, CUBE3D_BASE_TOPFRONT],
+      [projFrontCanvas, projFrontCtx, CUBE3D_BASE_TOPFRONT],
+    ]) {
+      canvas.style.width = '';
+      canvas.style.height = '';
+      const size = canvas.clientWidth || base;
+      sizeCanvas(canvas, ctx, size);
+      if (canvas === cube3dCanvas) CUBE_SIZE = size;
+      else if (canvas === projSideCanvas) PROJ_SIDE_SIZE = size;
+      else PROJ_TOPFRONT_SIZE = size;
+    }
+    return;
+  }
+
+  const panel = document.querySelector('.panel');
+  const available = (panel && panel.clientWidth) || CUBE3D_BASE_TOTAL;
+  const scale = available / CUBE3D_BASE_TOTAL;
+
+  const slotsW = Math.round(CUBE3D_BASE_SLOTS_W * scale);
+  const sideSize = Math.round(CUBE3D_BASE_SIDE * scale);
+  const cubeSize = Math.round(CUBE3D_BASE_CUBE * scale);
+  const topFrontSize = Math.round(CUBE3D_BASE_TOPFRONT * scale);
+
+  slots3DEl.style.width = `${slotsW}px`;
+  sizeCanvas(cube3dCanvas, cube3dCtx, cubeSize);
+  sizeCanvas(projSideCanvas, projSideCtx, sideSize);
+  sizeCanvas(projTopCanvas, projTopCtx, topFrontSize);
+  sizeCanvas(projFrontCanvas, projFrontCtx, topFrontSize);
+
+  CUBE_SIZE = cubeSize;
+  PROJ_SIDE_SIZE = sideSize;
+  PROJ_TOPFRONT_SIZE = topFrontSize;
 }
 
 function fullRedraw() {
