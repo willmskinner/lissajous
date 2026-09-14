@@ -1011,13 +1011,20 @@ function resizeCube3D() {
     return;
   }
 
+  // The cube matches the 2D curve's size exactly (not its own independent
+  // scale) so the graph itself is the same height in both modes and nothing
+  // below it jumps up or down when you toggle. The other three elements then
+  // scale together to soak up whatever width is left, keeping the row's
+  // total width matched to the keyboard above it.
   const panel = document.querySelector('.panel');
   const available = (panel && panel.clientWidth) || CUBE3D_BASE_TOTAL;
-  const scale = available / CUBE3D_BASE_TOTAL;
+  const cubeSize = CURVE_SIZE;
+  const othersBase = CUBE3D_BASE_SLOTS_W + CUBE3D_BASE_SIDE + CUBE3D_BASE_TOPFRONT;
+  const remaining = available - cubeSize - 3 * CUBE3D_ROW_GAP;
+  const scale = Math.max(0.2, remaining / othersBase);
 
   const slotsW = Math.round(CUBE3D_BASE_SLOTS_W * scale);
   const sideSize = Math.round(CUBE3D_BASE_SIDE * scale);
-  const cubeSize = Math.round(CUBE3D_BASE_CUBE * scale);
   const topFrontSize = Math.round(CUBE3D_BASE_TOPFRONT * scale);
 
   slots3DEl.style.width = `${slotsW}px`;
@@ -1679,6 +1686,7 @@ function setMode(newMode) {
   if (mode === '2d') { slPx.value = st.phiX; slPxy.value = st.phiXY; }
   else { slPx.value = st.phiY; slPxy.value = st.phiZ; }
 
+  resizeCanvas(); // no-ops while 2D is hidden; refreshes CURVE_SIZE when switching back to it
   if (mode === '3d') resizeCube3D();
   fullRedraw();
   refreshPresetLabel();
@@ -1691,6 +1699,11 @@ modeToggleBtn.addEventListener('click', () => setMode(mode === '2d' ? '3d' : '2d
 // Init
 // ---------------------------------------------------------------------------
 function resizeCanvas() {
+  // #mode2D is display:none while in 3D mode, so its clientWidth reads 0 —
+  // skip and keep CURVE_SIZE's last valid value (resizeCube3D() reuses it to
+  // keep the two modes' graph height matched, so it must stay correct even
+  // while 2D is offscreen).
+  if (mode2DEl.hidden) return;
   const wrap = curveCanvas.parentElement;
   const size = Math.min(560, wrap.clientWidth || 560);
   const dpr = window.devicePixelRatio || 1;
