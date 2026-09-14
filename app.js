@@ -192,6 +192,7 @@ const state3d = {
   baseOctave: 4,
   animPhiY: false,
   animPhiZ: false,
+  autoRotate: false,
 };
 
 const NOTE_COLS = ['#ff6644', '#ffbb44', '#44ddbb', '#4499ff'];
@@ -967,6 +968,15 @@ function toggleAnim(key2d, key3d, btn) {
 animPxBtn.addEventListener('click', () => toggleAnim('animPhiX', 'animPhiY', animPxBtn));
 animPxyBtn.addEventListener('click', () => toggleAnim('animPhiXY', 'animPhiZ', animPxyBtn));
 
+// Slow auto-rotate for the 3D cube (a full turn takes about a minute) — handy
+// for a hands-off live-performance visual.
+const ROTATE_STEP = 0.006; // radians per 40ms tick
+const rotateToggleBtn = $('#rotateToggle');
+rotateToggleBtn.addEventListener('click', () => {
+  state3d.autoRotate = !state3d.autoRotate;
+  rotateToggleBtn.classList.toggle('on', state3d.autoRotate);
+});
+
 setInterval(() => {
   const st = activeState();
   let changed = false;
@@ -978,6 +988,10 @@ setInterval(() => {
     if (st.animPhiY) { st.phiY = (st.phiY + ANIM_STEP) % TWO_PI; slPx.value  = st.phiY; changed = true; }
     if (st.animPhiZ) { st.phiZ = (st.phiZ + ANIM_STEP) % TWO_PI; slPxy.value = st.phiZ; changed = true; }
     if (changed) updateCube3DFast();
+    if (st.autoRotate) {
+      rot3D.azim = (rot3D.azim + ROTATE_STEP) % TWO_PI;
+      if (!changed) redrawCube3DRotationOnly(); // updateCube3DFast() above already redrew this frame
+    }
   }
 }, 40);
 

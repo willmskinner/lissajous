@@ -207,6 +207,8 @@
   .slots-col-3d { display: flex; flex-direction: column; gap: 6px; width: 104px; flex: 0 0 auto; }
   .slots-col-3d .slot { min-height: 92px; }
   .cube3d-wrap { display: flex; flex-direction: column; align-items: center; }
+  .cube3d-canvas-wrap { position: relative; }
+  .rotate-toggle-btn { position: absolute; top: 8px; right: 8px; font-size: 15px; }
   canvas#cube3d {
     background: var(--bg); border-radius: 4px; cursor: grab; touch-action: none; max-width: 100%;
   }
@@ -270,7 +272,10 @@
     </div>
     <div class="cube3d-wrap">
       <div class="curve-title" id="cube3dTitle"></div>
-      <canvas id="cube3d" width="480" height="480"></canvas>
+      <div class="cube3d-canvas-wrap">
+        <canvas id="cube3d" width="480" height="480"></canvas>
+        <button class="anim-btn rotate-toggle-btn" id="rotateToggle" title="Auto-rotate cube">&#8635;</button>
+      </div>
     </div>
     <div class="proj-stack">
       <div class="proj-panel">
