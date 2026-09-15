@@ -1618,6 +1618,17 @@ for (const key in audToneBtns) {
 }
 slVol.addEventListener('input', () => audioEngine.setVolume(parseFloat(slVol.value)));
 
+// Clicking any button or radio (mode toggle, temperament, note count, …)
+// leaves it focused; note-playing keydowns still reach window either way,
+// but a lingering focus ring is confusing and (for buttons specifically) a
+// held Space/Enter would double as "click this button again". Blurring
+// right after the click keeps focus neutral so the keyboard always plays
+// notes immediately, with no need to click the piano first.
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('button, input[type="radio"]');
+  if (el) el.blur();
+});
+
 // ---------------------------------------------------------------------------
 // Keyboard input
 // ---------------------------------------------------------------------------
