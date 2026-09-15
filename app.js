@@ -141,7 +141,14 @@ function period(freqs, maxDenom = 24, cap = 96) {
 
 const N_POINTS = 4000;
 
-function lissajous4(freqs, phiX, phiXY) {
+// freqs.length is 2, 4, or 6 — the first half sums onto X, the second half
+// onto Y. Each axis's first note sits at phase 0 and every other note on
+// that axis shares the one phase knob for that axis (phiX for X, phiXY for
+// Y) — except a lone X note (2-note mode) uses phiX directly, since there's
+// no "other" note to offset it against. At k=2 this reduces exactly to the
+// original 4-note math.
+function lissajous2D(freqs, phiX, phiXY) {
+  const k = freqs.length / 2;
   const fMin = Math.min(...freqs);
   const r = freqs.map(f => f / fMin);
   const T = period(freqs);
@@ -152,8 +159,9 @@ function lissajous4(freqs, phiX, phiXY) {
   let xMax = 1e-12, yMax = 1e-12;
   for (let i = 0; i < n; i++) {
     const t = i * dt;
-    const xv = Math.sin(r[0] * t) + Math.sin(r[1] * t + phiX);
-    const yv = Math.sin(r[2] * t + phiXY) + Math.sin(r[3] * t + phiXY);
+    let xv = 0, yv = 0;
+    for (let j = 0; j < k; j++) xv += Math.sin(r[j] * t + ((j === 0 && k > 1) ? 0 : phiX));
+    for (let j = 0; j < k; j++) yv += Math.sin(r[k + j] * t + phiXY);
     x[i] = xv; y[i] = yv;
     if (Math.abs(xv) > xMax) xMax = Math.abs(xv);
     if (Math.abs(yv) > yMax) yMax = Math.abs(yv);
@@ -167,9 +175,14 @@ function lissajous4(freqs, phiX, phiXY) {
 // ---------------------------------------------------------------------------
 let mode = '2d'; // '2d' or '3d' — which top section + note-slot set is live
 
+// notes/octs arrays are always fixed at 6 slots (the largest any mode ever
+// needs); noteCount says how many of them are actually in play. Slots beyond
+// noteCount just sit unused, keeping whatever value they last had, so
+// switching note-count back and forth doesn't lose anything.
 const state = {
-  notes: ['A', 'E', 'D', 'A'],
-  octs: [4, 5, 5, 5],
+  notes: ['A', 'E', 'D', 'A', 'G', 'C'],
+  octs: [4, 5, 5, 5, 4, 5],
+  noteCount: 4, // 2, 4, or 6 — notes summed per axis is noteCount/2
   phiX: 0.0,
   phiXY: Math.PI / 4,
   temp: TEMP_NAMES[0],
@@ -179,12 +192,12 @@ const state = {
   animPhiXY: false,
 };
 
-// One note per axis instead of two-notes-summed-per-axis. temp is kept in
-// sync with `state.temp` (temperament is shared across both modes); phiY/phiZ
-// are 3D's analogue of phiX/phiXY.
+// temp is kept in sync with `state.temp` (temperament is shared across both
+// modes); phiY/phiZ are 3D's analogue of phiX/phiXY.
 const state3d = {
-  notes: ['C', 'G', 'C'],
-  octs: [4, 4, 5],
+  notes: ['C', 'G', 'C', 'E', 'D', 'A'],
+  octs: [4, 4, 5, 4, 5, 4],
+  noteCount: 3, // 3 or 6 — notes summed per axis is noteCount/3
   phiY: Math.PI / 4,
   phiZ: Math.PI / 3,
   temp: TEMP_NAMES[0],
@@ -195,14 +208,15 @@ const state3d = {
   autoRotate: false,
 };
 
-const NOTE_COLS = ['#ff6644', '#ffbb44', '#44ddbb', '#4499ff'];
-const SLOT_COLS_3D = NOTE_COLS.slice(0, 3);
+const NOTE_COLS = ['#ff6644', '#ffbb44', '#44ddbb', '#4499ff', '#cc77ff', '#ff5599'];
 const AXIS_COLS_3D = ['#ff9955', '#55ccff', '#66ffaa']; // X, Y, Z label colors
 const AXIS_NAMES_3D = ['X', 'Y', 'Z'];
 
 function activeState()     { return mode === '2d' ? state : state3d; }
-function activeNoteCols()  { return mode === '2d' ? NOTE_COLS : SLOT_COLS_3D; }
-function activeSlotCount() { return mode === '2d' ? 4 : 3; }
+// 3-note 3D keeps its axis-themed palette; everything else (2D at any count,
+// 6-note 3D) uses the general 6-color note palette, sliced to length.
+function activeNoteCols()  { return (mode === '3d' && state3d.noteCount === 3) ? AXIS_COLS_3D : NOTE_COLS; }
+function activeSlotCount() { return activeState().noteCount; }
 function activeFreqs() {
   const st = activeState();
   const n = activeSlotCount();
@@ -332,7 +346,7 @@ function updatePiano() {
     const el = pianoKeyEls[`${k.note}|${k.octave}`];
     el.style.background = k.isBlack ? 'var(--pia-black)' : 'var(--pia-white)';
   }
-  for (let i = 0; i < st.notes.length; i++) {
+  for (let i = 0; i < st.noteCount; i++) {
     const key = `${st.notes[i]}|${st.octs[i]}`;
     const el = pianoKeyEls[key];
     if (el) el.style.background = cols[i];
@@ -386,15 +400,19 @@ function assignNoteToActiveSlot(note, octave) {
 // ---------------------------------------------------------------------------
 const slotEls = []; // {root, note, freq, status, title}
 
+// Built once for the max (6 notes); drawSlot() shows/hides and relabels them
+// as the note-count radio changes. Placement alternates left/right by global
+// index, same as always — with the default 4-note count this still pairs
+// each column's two cards as one X note + one Y note.
+const MAX_SLOTS_2D = 6;
+
 function initSlots() {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < MAX_SLOTS_2D; i++) {
     const root = document.createElement('div');
     root.className = 'slot';
-    const axisLbl = i < 2 ? 'X  AXIS' : 'Y  AXIS';
-    const axisCol = i < 2 ? 'var(--x-col)' : 'var(--y-col)';
     root.innerHTML = `
-      <div class="s-title">Note ${i + 1}</div>
-      <div class="s-axis" style="color:${axisCol}">${axisLbl}</div>
+      <div class="s-title"></div>
+      <div class="s-axis"></div>
       <div class="s-note"></div>
       <div class="s-freq"></div>
       <div class="s-status"></div>`;
@@ -409,14 +427,24 @@ function initSlots() {
       freq: root.querySelector('.s-freq'),
       status: root.querySelector('.s-status'),
       title: root.querySelector('.s-title'),
+      axis: root.querySelector('.s-axis'),
     });
   }
 }
 
 function drawSlot(i) {
+  const els = slotEls[i];
+  if (i >= state.noteCount) { els.root.hidden = true; return; }
+  els.root.hidden = false;
+
+  const k = state.noteCount / 2;
+  const isX = i < k;
+  els.axis.textContent = isX ? 'X  AXIS' : 'Y  AXIS';
+  els.axis.style.color = isX ? 'var(--x-col)' : 'var(--y-col)';
+  els.title.textContent = `Note ${i + 1}`;
+
   const col = NOTE_COLS[i];
   const isAct = state.activeSlot === i;
-  const els = slotEls[i];
   els.root.style.borderColor = col;
   els.root.style.borderWidth = isAct ? '2.5px' : '1px';
   els.title.style.color = isAct ? col : '#445566';
@@ -432,58 +460,124 @@ function drawSlot(i) {
   }
 }
 
-// ---- 3D note slots: one per axis (X/Y/Z) instead of two-per-axis ----
+// ---- 3D note slots: one per axis, or two side by side per axis in 6-note
+// mode (X1/X2, Y1/Y2, Z1/Z2) so the column widens instead of getting tall ----
 const slots3DEl = $('#slots3D');
-const slotEls3D = [];
+const slotEls3D = []; // fixed addressing: slotEls3D[axis*2 + within], within ∈ {0,1}
+const MAX_SLOTS_3D = 6;
 
+// Built once for the max (6 notes = 2 per axis), grouped into one row div per
+// axis. drawSlot3D() shows/hides the "within=1" card and relabels/repositions
+// data as the note-count radio changes — the DOM position (which axis-row,
+// which side) never moves; only which *data* index (axis*k + within, for the
+// current k) it displays does.
 function initSlots3D() {
-  for (let i = 0; i < 3; i++) {
-    const root = document.createElement('div');
-    root.className = 'slot';
-    root.innerHTML = `
-      <div class="s-title">${AXIS_NAMES_3D[i]} Note</div>
-      <div class="s-axis" style="color:${AXIS_COLS_3D[i]}">${AXIS_NAMES_3D[i]}  AXIS</div>
-      <div class="s-note"></div>
-      <div class="s-freq"></div>
-      <div class="s-status"></div>`;
-    root.addEventListener('click', () => {
-      state3d.activeSlot = i;
-      redrawSlots();
-    });
-    slots3DEl.appendChild(root);
-    slotEls3D.push({
-      root,
-      note: root.querySelector('.s-note'),
-      freq: root.querySelector('.s-freq'),
-      status: root.querySelector('.s-status'),
-      title: root.querySelector('.s-title'),
-    });
+  for (let axis = 0; axis < 3; axis++) {
+    const row = document.createElement('div');
+    row.className = 'axis-row-3d';
+    slots3DEl.appendChild(row);
+    for (let within = 0; within < 2; within++) {
+      const root = document.createElement('div');
+      root.className = 'slot';
+      root.innerHTML = `
+        <div class="s-title"></div>
+        <div class="s-axis"></div>
+        <div class="s-note"></div>
+        <div class="s-freq"></div>
+        <div class="s-status"></div>`;
+      root.addEventListener('click', () => {
+        const k = state3d.noteCount / 3;
+        if (within >= k) return; // not active at the current note count
+        state3d.activeSlot = axis * k + within;
+        redrawSlots();
+      });
+      row.appendChild(root);
+      slotEls3D.push({
+        root,
+        note: root.querySelector('.s-note'),
+        freq: root.querySelector('.s-freq'),
+        status: root.querySelector('.s-status'),
+        title: root.querySelector('.s-title'),
+        axis: root.querySelector('.s-axis'),
+      });
+    }
   }
 }
 
-function drawSlot3D(i) {
-  const col = SLOT_COLS_3D[i];
-  const isAct = state3d.activeSlot === i;
-  const els = slotEls3D[i];
+function drawSlot3D(fi) {
+  const els = slotEls3D[fi];
+  const axis = Math.floor(fi / 2), within = fi % 2;
+  const k = state3d.noteCount / 3;
+  if (within >= k) { els.root.hidden = true; return; }
+  els.root.hidden = false;
+
+  const dataIdx = axis * k + within;
+  const axisName = AXIS_NAMES_3D[axis];
+  els.title.textContent = k > 1 ? `${axisName}${within + 1} Note` : `${axisName} Note`;
+  els.axis.textContent = `${axisName}  AXIS`;
+  els.axis.style.color = AXIS_COLS_3D[axis];
+
+  const col = activeNoteCols()[dataIdx];
+  const isAct = state3d.activeSlot === dataIdx;
   els.root.style.borderColor = col;
   els.root.style.borderWidth = isAct ? '2.5px' : '1px';
   els.title.style.color = isAct ? col : '#445566';
-  els.note.textContent = `${state3d.notes[i]}${state3d.octs[i]}`;
+  els.note.textContent = `${state3d.notes[dataIdx]}${state3d.octs[dataIdx]}`;
   els.note.style.color = col;
-  els.freq.textContent = `${noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp).toFixed(1)} Hz`;
+  els.freq.textContent = `${noteFreq(state3d.notes[dataIdx], state3d.octs[dataIdx], state3d.temp).toFixed(1)} Hz`;
   if (isAct) {
     els.status.textContent = '▲  ACTIVE';
     els.status.style.color = col;
   } else {
-    els.status.textContent = `press  ${i + 1}`;
+    els.status.textContent = `press  ${dataIdx + 1}`;
     els.status.style.color = '#2a3a4a';
   }
 }
 
 function redrawSlots() {
-  if (mode === '2d') { for (let i = 0; i < 4; i++) drawSlot(i); }
-  else { for (let i = 0; i < 3; i++) drawSlot3D(i); }
+  if (mode === '2d') { for (let i = 0; i < MAX_SLOTS_2D; i++) drawSlot(i); }
+  else { for (let i = 0; i < MAX_SLOTS_3D; i++) drawSlot3D(i); }
 }
+
+// ---------------------------------------------------------------------------
+// Note-count radios — 2/4/6 in 2D (notes summed per axis = count/2), 3/6 in
+// 3D (per axis = count/3). One shared row of up to 3 radios; which options
+// show and which is checked depends on the current mode.
+// ---------------------------------------------------------------------------
+const NOTE_COUNTS_2D = [2, 4, 6];
+const NOTE_COUNTS_3D = [3, 6];
+const ncRadios = [$('#ncRadio0'), $('#ncRadio1'), $('#ncRadio2')];
+const ncTexts = [$('#ncText0'), $('#ncText1'), $('#ncText2')];
+
+function updateNoteCountUI() {
+  const options = mode === '2d' ? NOTE_COUNTS_2D : NOTE_COUNTS_3D;
+  const current = activeState().noteCount;
+  ncRadios.forEach((radio, i) => {
+    const opt = options[i];
+    const optLabel = radio.closest('.notecount-opt');
+    if (opt === undefined) { optLabel.hidden = true; return; }
+    optLabel.hidden = false;
+    radio.value = opt;
+    radio.checked = opt === current;
+    ncTexts[i].textContent = `${opt} notes`;
+  });
+}
+
+function setNoteCount(n) {
+  const st = activeState();
+  st.noteCount = n;
+  st.activeSlot = Math.min(st.activeSlot, n - 1);
+  updateNoteCountUI();
+  updatePianoHint();
+  if (mode === '3d') resizeCube3D(); // slot column widens for the 2-per-axis (6-note) layout
+  fullRedraw();
+}
+
+ncRadios.forEach(radio => {
+  radio.addEventListener('change', () => {
+    if (radio.checked) setNoteCount(Number(radio.value));
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Temperament buttons
@@ -573,7 +667,7 @@ function drawCurve(x, y) {
 
 // Standalone PNG snapshot of a curve — used when saving/importing a preset.
 function renderCurveSnapshot(freqs, phiX, phiXY, size = 480) {
-  const [x, y] = lissajous4(freqs, phiX, phiXY);
+  const [x, y] = lissajous2D(freqs, phiX, phiXY);
   const off = document.createElement('canvas');
   off.width = size; off.height = size;
   const ctx = off.getContext('2d');
@@ -588,26 +682,36 @@ function renderCurveSnapshot(freqs, phiX, phiXY, size = 480) {
   return off.toDataURL('image/png');
 }
 
+// Describes one axis's summed notes: "A4 (440.0 Hz) + E5 (660.0 Hz)   [3:2 –
+// Perfect 5th]". The bracketed ratio only makes sense for exactly two notes,
+// so it's omitted for 1 or 3 notes per axis.
+function axisLabelText(names, octs, freqs) {
+  const parts = freqs.map((f, i) => `${names[i]}${octs[i]} (${f.toFixed(1)} Hz)`);
+  let s = parts.join(' + ');
+  if (freqs.length === 2) {
+    const [r, iv] = describeRatio(freqs[0], freqs[1]);
+    s += `   [${r}${iv ? ` – ${iv}` : ''}]`;
+  }
+  return s;
+}
+
 function updateCurveFull() {
-  const freqs = [0, 1, 2, 3].map(i => noteFreq(state.notes[i], state.octs[i], state.temp));
-  const [x, y] = lissajous4(freqs, state.phiX, state.phiXY);
+  const n = state.noteCount, k = n / 2;
+  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state.notes[i], state.octs[i], state.temp));
+  const [x, y] = lissajous2D(freqs, state.phiX, state.phiXY);
   drawCurve(x, y);
 
-  const [f1, f2, f3, f4] = freqs;
-  const [rx, ix] = describeRatio(f1, f2);
-  const [ry, iy] = describeRatio(f3, f4);
-  const ixS = ix ? ` – ${ix}` : '';
-  const iyS = iy ? ` – ${iy}` : '';
-  xLabelEl.textContent = `${state.notes[0]}${state.octs[0]} (${f1.toFixed(1)} Hz) + ${state.notes[1]}${state.octs[1]} (${f2.toFixed(1)} Hz)   [${rx}${ixS}]`;
-  yLabelEl.textContent = `${state.notes[2]}${state.octs[2]} (${f3.toFixed(1)} Hz) + ${state.notes[3]}${state.octs[3]} (${f4.toFixed(1)} Hz)   [${ry}${iyS}]`;
+  xLabelEl.textContent = axisLabelText(state.notes.slice(0, k), state.octs.slice(0, k), freqs.slice(0, k));
+  yLabelEl.textContent = axisLabelText(state.notes.slice(k, n), state.octs.slice(k, n), freqs.slice(k, n));
 
   if (audioEngine.on) audioEngine.setFreqs(freqs);
   return freqs;
 }
 
 function updateCurveFast() {
-  const freqs = [0, 1, 2, 3].map(i => noteFreq(state.notes[i], state.octs[i], state.temp));
-  const [x, y] = lissajous4(freqs, state.phiX, state.phiXY);
+  const n = state.noteCount;
+  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state.notes[i], state.octs[i], state.temp));
+  const [x, y] = lissajous2D(freqs, state.phiX, state.phiXY);
   drawCurve(x, y);
 }
 
@@ -617,7 +721,12 @@ function updateCurveFast() {
 // ---------------------------------------------------------------------------
 const N_POINTS_3D = 3000;
 
+// freqs.length is 3 or 6 — split evenly into thirds, one third per axis.
+// X's note(s) always sit at phase 0 (the reference axis, as before); every
+// note on Y shares phiY, every note on Z shares phiZ. At k=1 this reduces
+// exactly to the original one-note-per-axis math.
 function lissajous3(freqs, phiY, phiZ) {
+  const k = freqs.length / 3;
   const fMin = Math.min(...freqs);
   const r = freqs.map(f => f / fMin);
   const T = period(freqs);
@@ -626,9 +735,11 @@ function lissajous3(freqs, phiY, phiZ) {
   const dt = (2 * Math.PI * T) / (n - 1);
   for (let i = 0; i < n; i++) {
     const t = i * dt;
-    x[i] = Math.sin(r[0] * t);
-    y[i] = Math.sin(r[1] * t + phiY);
-    z[i] = Math.sin(r[2] * t + phiZ);
+    let xv = 0, yv = 0, zv = 0;
+    for (let j = 0; j < k; j++) xv += Math.sin(r[j] * t);
+    for (let j = 0; j < k; j++) yv += Math.sin(r[k + j] * t + phiY);
+    for (let j = 0; j < k; j++) zv += Math.sin(r[2 * k + j] * t + phiZ);
+    x[i] = xv; y[i] = yv; z[i] = zv;
   }
   for (const arr of [x, y, z]) {
     let m = 1e-12;
@@ -764,8 +875,17 @@ let PROJ_SIDE_SIZE = 220;
 
 let _last3D = null; // cached [x,y,z] so drag-rotate doesn't recompute the curve
 
+// Ratio annotation on the TOP/FRONT/SIDE titles only makes sense when
+// there's exactly one note per axis to compare — omitted for 6-note mode.
+function proj3DRatioSuffix(fa, fb, k) {
+  if (k !== 1) return '';
+  const [r, iv] = describeRatio(fa, fb);
+  return `   [${r}${iv ? ` – ${iv}` : ''}]`;
+}
+
 function updateCube3DFull() {
-  const freqs = [0, 1, 2].map(i => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
+  const n = state3d.noteCount, k = n / 3;
+  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
   const [x, y, z] = lissajous3(freqs, state3d.phiY, state3d.phiZ);
   _last3D = [x, y, z];
 
@@ -775,13 +895,10 @@ function updateCube3DFull() {
   renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
   renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
 
-  const [fx, fy, fz] = freqs;
-  const [rxy, ixy] = describeRatio(fx, fy);
-  const [rxz, ixz] = describeRatio(fx, fz);
-  const [ryz, iyz] = describeRatio(fy, fz);
-  projTopTitleEl.textContent   = `TOP (X–Z)   [${rxz}${ixz ? ` – ${ixz}` : ''}]`;
-  projFrontTitleEl.textContent = `FRONT (X–Y)   [${rxy}${ixy ? ` – ${ixy}` : ''}]`;
-  projSideTitleEl.textContent  = `SIDE (Y–Z)   [${ryz}${iyz ? ` – ${iyz}` : ''}]`;
+  const [fx, fy, fz] = [freqs[0], freqs[k], freqs[2 * k]];
+  projTopTitleEl.textContent   = `TOP (X–Z)${proj3DRatioSuffix(fx, fz, k)}`;
+  projFrontTitleEl.textContent = `FRONT (X–Y)${proj3DRatioSuffix(fx, fy, k)}`;
+  projSideTitleEl.textContent  = `SIDE (Y–Z)${proj3DRatioSuffix(fy, fz, k)}`;
 
   if (audioEngine.on) audioEngine.setFreqs(freqs);
 }
@@ -789,7 +906,8 @@ function updateCube3DFull() {
 // Fast path for phase-slider drags: recompute the curve but skip re-reading
 // note/frequency state (unchanged) — mirrors updateCurveFast().
 function updateCube3DFast() {
-  const freqs = [0, 1, 2].map(i => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
+  const n = state3d.noteCount;
+  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
   const [x, y, z] = lissajous3(freqs, state3d.phiY, state3d.phiZ);
   _last3D = [x, y, z];
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
@@ -1015,11 +1133,15 @@ function resizeCube3D() {
   const panel = document.querySelector('.panel');
   const available = (panel && panel.clientWidth) || CUBE3D_BASE_TOTAL;
   const cubeSize = CURVE_SIZE;
-  const othersBase = CUBE3D_BASE_SLOTS_W + CUBE3D_BASE_SIDE + CUBE3D_BASE_TOPFRONT;
+  // 6-note mode shows two note-cards per axis row (X1/X2, Y1/Y2, Z1/Z2)
+  // side by side instead of one tall stack, so that column needs roughly
+  // double the width to stay legible.
+  const slotsBase = CUBE3D_BASE_SLOTS_W * (state3d.noteCount === 6 ? 2 : 1);
+  const othersBase = slotsBase + CUBE3D_BASE_SIDE + CUBE3D_BASE_TOPFRONT;
   const remaining = available - cubeSize - 3 * CUBE3D_ROW_GAP;
   const scale = Math.max(0.2, remaining / othersBase);
 
-  const slotsW = Math.round(CUBE3D_BASE_SLOTS_W * scale);
+  const slotsW = Math.round(slotsBase * scale);
   const sideSize = Math.round(CUBE3D_BASE_SIDE * scale);
   const topFrontSize = Math.round(CUBE3D_BASE_TOPFRONT * scale);
 
@@ -1344,7 +1466,7 @@ window.addEventListener('keydown', (ev) => {
   const key = ev.key.toLowerCase();
   const st = activeState();
   const n = activeSlotCount();
-  const digits = mode === '2d' ? ['1', '2', '3', '4'] : ['1', '2', '3'];
+  const digits = Array.from({ length: n }, (_, i) => String(i + 1));
 
   if (digits.includes(key)) {
     st.activeSlot = Number(key) - 1;
@@ -1497,22 +1619,31 @@ function refreshPresetLabel() {
   }
 }
 
+// Copies as many notes/octaves as the preset provides into the fixed
+// 6-slot state arrays, leaving any remaining slots at whatever they already
+// were — handles both current (always 6-length) and older, shorter presets.
+function applyPresetNotes(st, notes, octs) {
+  for (let i = 0; i < notes.length && i < 6; i++) { st.notes[i] = notes[i]; st.octs[i] = octs[i]; }
+}
+
 function applyPreset(p) {
   // Temperament is shared, so applying a preset updates it on both states
   // regardless of which mode the preset itself belongs to.
   state.temp = p.temperament;
   state3d.temp = p.temperament;
   if (mode === '2d') {
-    state.notes = [...p.notes];
-    state.octs = [...p.octaves];
+    state.noteCount = p.noteCount || (NOTE_COUNTS_2D.includes(p.notes.length) ? p.notes.length : 4);
+    applyPresetNotes(state, p.notes, p.octaves);
+    state.activeSlot = Math.min(state.activeSlot, state.noteCount - 1);
     const ph = presetPhases(p);
     state.phiX = ph.phiX;
     state.phiXY = ph.phiXY;
     slPx.value = state.phiX;
     slPxy.value = state.phiXY;
   } else {
-    state3d.notes = [...p.notes];
-    state3d.octs = [...p.octaves];
+    state3d.noteCount = p.noteCount || (NOTE_COUNTS_3D.includes(p.notes.length) ? p.notes.length : 3);
+    applyPresetNotes(state3d, p.notes, p.octaves);
+    state3d.activeSlot = Math.min(state3d.activeSlot, state3d.noteCount - 1);
     const ph = p.phases || {};
     state3d.phiY = ph.phiY;
     state3d.phiZ = ph.phiZ;
@@ -1521,6 +1652,7 @@ function applyPreset(p) {
   }
   tempDescEl.textContent = TEMP_DESCRIPTIONS[activeState().temp];
   styleTempButtons();
+  updateNoteCountUI();
   fullRedraw();
 }
 
@@ -1539,20 +1671,20 @@ function savePreset() {
   let image, preset;
 
   if (mode === '2d') {
-    const freqs = [0, 1, 2, 3].map(i => noteFreq(st.notes[i], st.octs[i], st.temp));
+    const freqs = Array.from({ length: st.noteCount }, (_, i) => noteFreq(st.notes[i], st.octs[i], st.temp));
     try { image = renderCurveSnapshot(freqs, st.phiX, st.phiXY); } catch (e) { image = null; }
     preset = {
-      name, mode: '2d',
+      name, mode: '2d', noteCount: st.noteCount,
       notes: [...st.notes], octaves: [...st.octs],
       phases: { phiX: st.phiX, phiXY: st.phiXY },
       temperament: st.temp,
       created: new Date().toISOString(),
     };
   } else {
-    const freqs = [0, 1, 2].map(i => noteFreq(st.notes[i], st.octs[i], st.temp));
+    const freqs = Array.from({ length: st.noteCount }, (_, i) => noteFreq(st.notes[i], st.octs[i], st.temp));
     try { image = renderCube3DSnapshot(freqs, st.phiY, st.phiZ); } catch (e) { image = null; }
     preset = {
-      name, mode: '3d',
+      name, mode: '3d', noteCount: st.noteCount,
       notes: [...st.notes], octaves: [...st.octs],
       phases: { phiY: st.phiY, phiZ: st.phiZ },
       temperament: st.temp,
@@ -1663,10 +1795,12 @@ const phiLabelBEl = $('#phiLabelB');
 const pianoHintEl = $('#pianoHint');
 const pageTitleEl = $('#pageTitle');
 
-const HINT_2D = 'Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
-                '[ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;4 / Tab select slot &nbsp;&middot;&nbsp; Space = sound on/off';
-const HINT_3D = 'Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
-                '[ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;3 / Tab select axis &nbsp;&middot;&nbsp; Space = sound on/off &nbsp;&middot;&nbsp; Drag cube to rotate';
+function updatePianoHint() {
+  const n = activeSlotCount();
+  const base = 'Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
+    `[ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;${n} / Tab select ${mode === '2d' ? 'slot' : 'axis'} &nbsp;&middot;&nbsp; Space = sound on/off`;
+  pianoHintEl.innerHTML = mode === '2d' ? base : `${base} &nbsp;&middot;&nbsp; Drag cube to rotate`;
+}
 
 function setMode(newMode) {
   mode = newMode;
@@ -1677,7 +1811,8 @@ function setMode(newMode) {
   pageTitleEl.textContent = mode === '2d' ? '2D LISSAJOUS CURVE' : '3D LISSAJOUS CURVE';
   phiLabelAEl.textContent = mode === '2d' ? 'φ inner X' : 'φ Y';
   phiLabelBEl.textContent = mode === '2d' ? 'φ X vs Y' : 'φ Z';
-  pianoHintEl.innerHTML = mode === '2d' ? HINT_2D : HINT_3D;
+  updatePianoHint();
+  updateNoteCountUI();
 
   const st = activeState();
   if (mode === '2d') { slPx.value = st.phiX; slPxy.value = st.phiXY; }
@@ -1715,6 +1850,8 @@ function resizeCanvas() {
 resizeCanvas();
 resizeCube3D();
 initTempButtons();
+updateNoteCountUI();
+updatePianoHint();
 initPiano();
 initSlots();
 initSlots3D();

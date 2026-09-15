@@ -85,11 +85,23 @@
   .temp-label { text-align: center; font-size: 10px; letter-spacing: 0.15em; color: #556677; font-weight: 700; margin: 5px 0 2px; }
   .temp-desc { text-align: center; font-size: 11px; font-style: italic; color: #7a8fa8; min-height: 2.6em; margin-bottom: 6px; padding: 0 4px; }
 
+  /* ---- note-count row ---- */
+  .notecount-row { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  .notecount-opt {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off);
+    border-radius: 3px; padding: 5px 9px; font-size: 11px; cursor: pointer; white-space: nowrap;
+  }
+  .notecount-opt:has(input:checked) { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 2px; }
+  .notecount-opt[hidden] { display: none; }
+  .notecount-opt input { accent-color: var(--accent); margin: 0; }
+
   /* ---- phase / audio controls row ---- */
   .controls-row {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;
     margin-bottom: 6px;
   }
+  .phase-group { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; }
   .phase-ctrl { display: flex; align-items: center; gap: 6px; }
   .anim-btn {
     width: 26px; height: 26px; border-radius: 3px; background: var(--btn-off);
@@ -112,7 +124,7 @@
     border-color: var(--orange-dim); color: var(--orange); font-weight: 700; border-width: 1.5px;
   }
   #audOn.on { background: var(--orange-bg-on); border-color: var(--orange); border-width: 2px; color: var(--orange); }
-  .vol-block { display: flex; flex-direction: column; align-items: center; margin-left: 4px; }
+  .vol-block { display: flex; flex-direction: column; align-items: center; }
   .vol-block label { font-size: 10px; }
   .vol-block input[type=range] { width: 80px; accent-color: #2a5a3a; }
 
@@ -158,6 +170,7 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 6px 2px; cursor: pointer; min-height: 76px; text-align: center;
   }
+  .slot[hidden] { display: none; }
   .slot .s-title { font-size: 10.5px; font-weight: 700; color: #445566; }
   .slot .s-axis { font-size: 9px; margin-top: 1px; }
   .slot .s-note { font-size: 22px; font-weight: 700; margin: 3px 0; }
@@ -204,7 +217,8 @@
     justify-content: center; flex-wrap: wrap;
   }
   .slots-col-3d { display: flex; flex-direction: column; gap: 6px; width: 104px; flex: 0 0 auto; }
-  .slots-col-3d .slot { min-height: 92px; }
+  .axis-row-3d { display: flex; flex-direction: row; gap: 6px; }
+  .slots-col-3d .slot { min-height: 92px; min-width: 0; }
   .cube3d-wrap { display: flex; flex-direction: column; align-items: center; }
   .cube3d-canvas-wrap { position: relative; }
   .rotate-toggle-btn { position: absolute; top: 8px; right: 8px; font-size: 15px; }
@@ -299,31 +313,40 @@
   <div class="temp-desc" id="tempDesc"></div>
 
   <div class="controls-row">
-    <div class="phase-ctrl">
-      <button class="anim-btn" id="animPx">&#9654;</button>
-      <div class="slider-block">
-        <label id="phiLabelA">&phi; inner X</label>
-        <input type="range" id="slPx" min="0" max="6.283185307" step="0.001" value="0">
-      </div>
-    </div>
-
     <div class="audio-strip">
       <button class="aud-btn" id="audOn">&#9834; off</button>
       <button class="aud-btn on" id="audSine">Sine</button>
       <button class="aud-btn" id="audEp">E. Piano</button>
       <button class="aud-btn" id="audPno">Piano</button>
-      <div class="vol-block">
-        <label>Vol</label>
-        <input type="range" id="slVol" min="0" max="1" step="0.01" value="0.25">
+    </div>
+
+    <div class="vol-block">
+      <label>Vol</label>
+      <input type="range" id="slVol" min="0" max="1" step="0.01" value="0.25">
+    </div>
+
+    <div class="phase-group">
+      <div class="phase-ctrl">
+        <button class="anim-btn" id="animPx">&#9654;</button>
+        <div class="slider-block">
+          <label id="phiLabelA">&phi; inner X</label>
+          <input type="range" id="slPx" min="0" max="6.283185307" step="0.001" value="0">
+        </div>
+      </div>
+
+      <div class="phase-ctrl pxy-ctrl">
+        <div class="slider-block pxy">
+          <label id="phiLabelB">&phi; X vs Y</label>
+          <input type="range" id="slPxy" min="0" max="6.283185307" step="0.001" value="0.785398163">
+        </div>
+        <button class="anim-btn" id="animPxy">&#9654;</button>
       </div>
     </div>
 
-    <div class="phase-ctrl pxy-ctrl">
-      <div class="slider-block pxy">
-        <label id="phiLabelB">&phi; X vs Y</label>
-        <input type="range" id="slPxy" min="0" max="6.283185307" step="0.001" value="0.785398163">
-      </div>
-      <button class="anim-btn" id="animPxy">&#9654;</button>
+    <div class="notecount-row" id="noteCountRow">
+      <label class="notecount-opt"><input type="radio" name="noteCount" id="ncRadio0"><span id="ncText0"></span></label>
+      <label class="notecount-opt"><input type="radio" name="noteCount" id="ncRadio1"><span id="ncText1"></span></label>
+      <label class="notecount-opt"><input type="radio" name="noteCount" id="ncRadio2"><span id="ncText2"></span></label>
     </div>
   </div>
 
