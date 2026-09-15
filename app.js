@@ -141,27 +141,31 @@ function period(freqs, maxDenom = 24, cap = 96) {
 
 const N_POINTS = 4000;
 
-// freqs.length is 2, 4, or 6 — the first half sums onto X, the second half
-// onto Y. Each axis's first note sits at phase 0 and every other note on
-// that axis shares the one phase knob for that axis (phiX for X, phiXY for
-// Y) — except a lone X note (2-note mode) uses phiX directly, since there's
-// no "other" note to offset it against. At k=2 this reduces exactly to the
-// original 4-note math.
-function lissajous2D(freqs, phiX, phiXY) {
-  const k = freqs.length / 2;
-  const fMin = Math.min(...freqs);
-  const r = freqs.map(f => f / fMin);
-  const T = period(freqs);
+// freqGroups is [xFreqs, yFreqs] — arbitrary-length (including empty) arrays,
+// not necessarily the same length as each other (momentary mode can end up
+// with an uneven split). Each axis's first note sits at phase 0 and every
+// other note on that axis shares the one phase knob for that axis (phiX for
+// X, phiXY for Y) — except a lone X note uses phiX directly, since there's
+// no "other" note to offset it against. At 2-and-2 this reduces exactly to
+// the original 4-note math.
+function lissajous2D(freqGroups, phiX, phiXY) {
+  const [xFreqs, yFreqs] = freqGroups;
+  const all = [...xFreqs, ...yFreqs];
   const n = N_POINTS;
   const x = new Float64Array(n);
   const y = new Float64Array(n);
+  if (all.length === 0) return [x, y]; // nothing held — flat/empty curve
+  const fMin = Math.min(...all);
+  const rX = xFreqs.map(f => f / fMin);
+  const rY = yFreqs.map(f => f / fMin);
+  const T = period(all);
   const dt = (2 * Math.PI * T) / (n - 1);
   let xMax = 1e-12, yMax = 1e-12;
   for (let i = 0; i < n; i++) {
     const t = i * dt;
     let xv = 0, yv = 0;
-    for (let j = 0; j < k; j++) xv += Math.sin(r[j] * t + ((j === 0 && k > 1) ? 0 : phiX));
-    for (let j = 0; j < k; j++) yv += Math.sin(r[k + j] * t + phiXY);
+    for (let j = 0; j < rX.length; j++) xv += Math.sin(rX[j] * t + ((j === 0 && rX.length > 1) ? 0 : phiX));
+    for (let j = 0; j < rY.length; j++) yv += Math.sin(rY[j] * t + phiXY);
     x[i] = xv; y[i] = yv;
     if (Math.abs(xv) > xMax) xMax = Math.abs(xv);
     if (Math.abs(yv) > yMax) yMax = Math.abs(yv);
@@ -211,6 +215,9 @@ const state3d = {
 const NOTE_COLS = ['#ff6644', '#ffbb44', '#44ddbb', '#4499ff', '#cc77ff', '#ff5599'];
 const AXIS_COLS_3D = ['#ff9955', '#55ccff', '#66ffaa']; // X, Y, Z label colors
 const AXIS_NAMES_3D = ['X', 'Y', 'Z'];
+function axisLetterHtml(letter) {
+  return `<span style="color:${AXIS_COLS_3D[AXIS_NAMES_3D.indexOf(letter)]}">${letter}</span>`;
+}
 
 function activeState()     { return mode === '2d' ? state : state3d; }
 // 3-note 3D keeps its axis-themed palette; everything else (2D at any count,
@@ -218,9 +225,76 @@ function activeState()     { return mode === '2d' ? state : state3d; }
 function activeNoteCols()  { return (mode === '3d' && state3d.noteCount === 3) ? AXIS_COLS_3D : NOTE_COLS; }
 function activeSlotCount() { return activeState().noteCount; }
 function activeFreqs() {
+  if (inputMode === 'momentary') return currentNoteGroups().flat().map(n => n.freq);
   const st = activeState();
   const n = activeSlotCount();
   return Array.from({ length: n }, (_, i) => noteFreq(st.notes[i], st.octs[i], st.temp));
+}
+
+// ---------------------------------------------------------------------------
+// Latch vs momentary input
+//
+// Latch (the original behavior): a key assigns a note to the next slot and
+// it stays there until reassigned — a fixed noteCount, fixed axis split.
+//
+// Momentary: a key/MIDI note/piano click is only "on" while held. There's no
+// fixed note count or axis split — heldNotes is just the set currently down,
+// in press order, and it's redistributed across the current mode's axes
+// (2 for 2D, 3 for 3D) round-robin: held note i goes to axis i % numAxes.
+// Releasing one re-numbers the survivors in place, which naturally rebalances
+// the axes to within one note of each other without any extra bookkeeping.
+// ---------------------------------------------------------------------------
+let inputMode = 'latch'; // 'latch' | 'momentary'
+let heldNotes = []; // [{voiceKey, source, note, octave}], oldest first
+
+function currentAxisCount() { return mode === '2d' ? 2 : 3; }
+
+// Returns one array of {note, octave, freq} per axis (2 for 2D, 3 for 3D) —
+// the single source of truth both the curve math and the on-screen labels
+// draw from, whichever input mode is active.
+function currentNoteGroups() {
+  const numAxes = currentAxisCount();
+  const temp = activeState().temp;
+  if (inputMode === 'momentary') {
+    const groups = Array.from({ length: numAxes }, () => []);
+    heldNotes.forEach((hn, i) => {
+      groups[i % numAxes].push({ note: hn.note, octave: hn.octave, freq: noteFreq(hn.note, hn.octave, temp) });
+    });
+    return groups;
+  }
+  const st = activeState();
+  const n = st.noteCount, k = n / numAxes;
+  const groups = [];
+  for (let a = 0; a < numAxes; a++) {
+    const g = [];
+    for (let j = 0; j < k; j++) {
+      const i = a * k + j;
+      g.push({ note: st.notes[i], octave: st.octs[i], freq: noteFreq(st.notes[i], st.octs[i], st.temp) });
+    }
+    groups.push(g);
+  }
+  return groups;
+}
+
+function addHeldNote(voiceKey, note, octave, source) {
+  if (heldNotes.some(hn => hn.voiceKey === voiceKey)) return; // already down (e.g. key-repeat)
+  heldNotes.push({ voiceKey, source, note, octave });
+  fullRedraw();
+}
+
+function removeHeldNote(voiceKey) {
+  const before = heldNotes.length;
+  heldNotes = heldNotes.filter(hn => hn.voiceKey !== voiceKey);
+  if (heldNotes.length !== before) fullRedraw();
+}
+
+// Safety net for missed keyup events (e.g. alt-tabbing away while a key is
+// held) — only clears computer-keyboard-sourced notes; MIDI/piano are left
+// alone since a physical controller keeps sending its own note-offs.
+function releaseAllKeyboardHeldNotes() {
+  if (!heldNotes.some(hn => hn.source === 'kbd')) return;
+  heldNotes = heldNotes.filter(hn => hn.source !== 'kbd');
+  fullRedraw();
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +358,25 @@ const shortcutEls = {}; // kb key -> element
 const octLabelEls = {}; // octave -> element
 let octUnderlineEl;
 
+// In momentary mode a piano key behaves like a real key: held down (pointer
+// capture keeps the release event coming even if the pointer drifts off the
+// key) while the pointer is down, released on pointerup/cancel. In latch
+// mode a click just assigns it to the active slot, as always.
+function wirePianoKey(el, k, stopPropagationOnDown) {
+  const voiceKey = `piano-${k.note}-${k.octave}`;
+  el.addEventListener('pointerdown', (ev) => {
+    if (stopPropagationOnDown) ev.stopPropagation();
+    if (inputMode === 'momentary') {
+      el.setPointerCapture(ev.pointerId);
+      addHeldNote(voiceKey, k.note, k.octave, 'piano');
+    } else {
+      assignNoteToActiveSlot(k.note, k.octave);
+    }
+  });
+  el.addEventListener('pointerup', () => { if (inputMode === 'momentary') removeHeldNote(voiceKey); });
+  el.addEventListener('pointercancel', () => { if (inputMode === 'momentary') removeHeldNote(voiceKey); });
+}
+
 function initPiano() {
   const whiteW = 100 / N_WHITE; // percent
   // white keys first
@@ -294,7 +387,7 @@ function initPiano() {
     el.style.left = `${k.x * whiteW}%`;
     el.style.width = `${k.w * whiteW}%`;
     el.dataset.note = k.note; el.dataset.octave = k.octave;
-    el.addEventListener('pointerdown', () => assignNoteToActiveSlot(k.note, k.octave));
+    wirePianoKey(el, k, false);
     pianoEl.appendChild(el);
     pianoKeyEls[`${k.note}|${k.octave}`] = el;
   }
@@ -305,7 +398,7 @@ function initPiano() {
     el.style.left = `${k.x * whiteW}%`;
     el.style.width = `${k.w * whiteW}%`;
     el.dataset.note = k.note; el.dataset.octave = k.octave;
-    el.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); assignNoteToActiveSlot(k.note, k.octave); });
+    wirePianoKey(el, k, true);
     pianoEl.appendChild(el);
     pianoKeyEls[`${k.note}|${k.octave}`] = el;
   }
@@ -339,17 +432,28 @@ function initPiano() {
 
 function updatePiano() {
   const st = activeState();
-  const cols = activeNoteCols();
   const whiteW = initPiano._whiteW;
   // reset colors
   for (const k of pianoKeys) {
     const el = pianoKeyEls[`${k.note}|${k.octave}`];
     el.style.background = k.isBlack ? 'var(--pia-black)' : 'var(--pia-white)';
   }
-  for (let i = 0; i < st.noteCount; i++) {
-    const key = `${st.notes[i]}|${st.octs[i]}`;
-    const el = pianoKeyEls[key];
-    if (el) el.style.background = cols[i];
+  if (inputMode === 'momentary') {
+    // No fixed note/color assignment here — just color whichever keys are
+    // currently held, by whichever axis they'd currently land on.
+    const numAxes = currentAxisCount();
+    const axisCols = mode === '2d' ? ['var(--x-col)', 'var(--y-col)'] : AXIS_COLS_3D;
+    heldNotes.forEach((hn, i) => {
+      const el = pianoKeyEls[`${hn.note}|${hn.octave}`];
+      if (el) el.style.background = axisCols[i % numAxes];
+    });
+  } else {
+    const cols = activeNoteCols();
+    for (let i = 0; i < st.noteCount; i++) {
+      const key = `${st.notes[i]}|${st.octs[i]}`;
+      const el = pianoKeyEls[key];
+      if (el) el.style.background = cols[i];
+    }
   }
   // shortcut labels reposition for base octave
   for (const kbKey in KB_MAP) {
@@ -546,6 +650,7 @@ function redrawSlots() {
 // ---------------------------------------------------------------------------
 const NOTE_COUNTS_2D = [2, 4, 6];
 const NOTE_COUNTS_3D = [3, 6];
+const noteCountRow = $('#noteCountRow');
 const ncRadios = [$('#ncRadio0'), $('#ncRadio1'), $('#ncRadio2')];
 const ncTexts = [$('#ncText0'), $('#ncText1'), $('#ncText2')];
 
@@ -578,6 +683,47 @@ ncRadios.forEach(radio => {
     if (radio.checked) setNoteCount(Number(radio.value));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Latch / momentary toggle
+// ---------------------------------------------------------------------------
+const modeLatchRadio = $('#modeLatchRadio');
+const modeMomentaryRadio = $('#modeMomentaryRadio');
+
+// STL export needs a preset-like "this is the chord" concept the same way
+// presets do, so it's hidden in momentary mode too (on top of only ever
+// showing in 3D) — called from both the mode toggle and this one.
+function updateExportStlVisibility() {
+  exportStlBtn.hidden = mode !== '3d' || inputMode === 'momentary';
+}
+
+function updateInputModeUI() {
+  const isMomentary = inputMode === 'momentary';
+  modeLatchRadio.checked = !isMomentary;
+  modeMomentaryRadio.checked = isMomentary;
+  // The colored slot boxes assume a fixed note count, which momentary mode
+  // doesn't have — hide them (the piano key coloring is enough on its own).
+  // Note count and presets are latch-only concepts too, so hide those
+  // controls rather than leave ones that do nothing active.
+  slotsLeftEl.hidden = isMomentary;
+  slotsRightEl.hidden = isMomentary;
+  slots3DEl.hidden = isMomentary;
+  noteCountRow.hidden = isMomentary;
+  document.querySelectorAll('.preset-only').forEach(el => { el.hidden = isMomentary; });
+  updateExportStlVisibility();
+}
+
+function setInputMode(newInputMode) {
+  inputMode = newInputMode;
+  if (inputMode === 'latch') heldNotes = []; // don't carry stuck momentary notes into latch mode
+  updateInputModeUI();
+  updatePianoHint();
+  if (mode === '3d') resizeCube3D(); // slots3D's width budget changes when it's hidden/shown
+  fullRedraw();
+}
+
+modeLatchRadio.addEventListener('change', () => { if (modeLatchRadio.checked) setInputMode('latch'); });
+modeMomentaryRadio.addEventListener('change', () => { if (modeMomentaryRadio.checked) setInputMode('momentary'); });
 
 // ---------------------------------------------------------------------------
 // Temperament buttons
@@ -666,8 +812,8 @@ function drawCurve(x, y) {
 }
 
 // Standalone PNG snapshot of a curve — used when saving/importing a preset.
-function renderCurveSnapshot(freqs, phiX, phiXY, size = 480) {
-  const [x, y] = lissajous2D(freqs, phiX, phiXY);
+function renderCurveSnapshot(freqGroups, phiX, phiXY, size = 480) {
+  const [x, y] = lissajous2D(freqGroups, phiX, phiXY);
   const off = document.createElement('canvas');
   off.width = size; off.height = size;
   const ctx = off.getContext('2d');
@@ -696,22 +842,23 @@ function axisLabelText(names, octs, freqs) {
 }
 
 function updateCurveFull() {
-  const n = state.noteCount, k = n / 2;
-  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state.notes[i], state.octs[i], state.temp));
-  const [x, y] = lissajous2D(freqs, state.phiX, state.phiXY);
+  const [xGroup, yGroup] = currentNoteGroups();
+  const xFreqs = xGroup.map(nn => nn.freq), yFreqs = yGroup.map(nn => nn.freq);
+  const [x, y] = lissajous2D([xFreqs, yFreqs], state.phiX, state.phiXY);
   drawCurve(x, y);
 
-  xLabelEl.textContent = axisLabelText(state.notes.slice(0, k), state.octs.slice(0, k), freqs.slice(0, k));
-  yLabelEl.textContent = axisLabelText(state.notes.slice(k, n), state.octs.slice(k, n), freqs.slice(k, n));
+  xLabelEl.textContent = axisLabelText(xGroup.map(nn => nn.note), xGroup.map(nn => nn.octave), xFreqs);
+  yLabelEl.textContent = axisLabelText(yGroup.map(nn => nn.note), yGroup.map(nn => nn.octave), yFreqs);
 
+  const freqs = [...xFreqs, ...yFreqs];
   if (audioEngine.on) audioEngine.setFreqs(freqs);
   return freqs;
 }
 
 function updateCurveFast() {
-  const n = state.noteCount;
-  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state.notes[i], state.octs[i], state.temp));
-  const [x, y] = lissajous2D(freqs, state.phiX, state.phiXY);
+  const [xGroup, yGroup] = currentNoteGroups();
+  const xFreqs = xGroup.map(nn => nn.freq), yFreqs = yGroup.map(nn => nn.freq);
+  const [x, y] = lissajous2D([xFreqs, yFreqs], state.phiX, state.phiXY);
   drawCurve(x, y);
 }
 
@@ -721,24 +868,28 @@ function updateCurveFast() {
 // ---------------------------------------------------------------------------
 const N_POINTS_3D = 3000;
 
-// freqs.length is 3 or 6 — split evenly into thirds, one third per axis.
-// X's note(s) always sit at phase 0 (the reference axis, as before); every
-// note on Y shares phiY, every note on Z shares phiZ. At k=1 this reduces
-// exactly to the original one-note-per-axis math.
-function lissajous3(freqs, phiY, phiZ) {
-  const k = freqs.length / 3;
-  const fMin = Math.min(...freqs);
-  const r = freqs.map(f => f / fMin);
-  const T = period(freqs);
+// freqGroups is [xFreqs, yFreqs, zFreqs] — arbitrary-length (including empty)
+// arrays. X's note(s) always sit at phase 0 (the reference axis, as before);
+// every note on Y shares phiY, every note on Z shares phiZ. At 1-and-1-and-1
+// this reduces exactly to the original one-note-per-axis math.
+function lissajous3(freqGroups, phiY, phiZ) {
+  const [xFreqs, yFreqs, zFreqs] = freqGroups;
+  const all = [...xFreqs, ...yFreqs, ...zFreqs];
   const n = N_POINTS_3D;
   const x = new Float64Array(n), y = new Float64Array(n), z = new Float64Array(n);
+  if (all.length === 0) return [x, y, z]; // nothing held — flat/empty curve
+  const fMin = Math.min(...all);
+  const rX = xFreqs.map(f => f / fMin);
+  const rY = yFreqs.map(f => f / fMin);
+  const rZ = zFreqs.map(f => f / fMin);
+  const T = period(all);
   const dt = (2 * Math.PI * T) / (n - 1);
   for (let i = 0; i < n; i++) {
     const t = i * dt;
     let xv = 0, yv = 0, zv = 0;
-    for (let j = 0; j < k; j++) xv += Math.sin(r[j] * t);
-    for (let j = 0; j < k; j++) yv += Math.sin(r[k + j] * t + phiY);
-    for (let j = 0; j < k; j++) zv += Math.sin(r[2 * k + j] * t + phiZ);
+    for (let j = 0; j < rX.length; j++) xv += Math.sin(rX[j] * t);
+    for (let j = 0; j < rY.length; j++) yv += Math.sin(rY[j] * t + phiY);
+    for (let j = 0; j < rZ.length; j++) zv += Math.sin(rZ[j] * t + phiZ);
     x[i] = xv; y[i] = yv; z[i] = zv;
   }
   for (const arr of [x, y, z]) {
@@ -877,16 +1028,19 @@ let _last3D = null; // cached [x,y,z] so drag-rotate doesn't recompute the curve
 
 // Ratio annotation on the TOP/FRONT/SIDE titles only makes sense when
 // there's exactly one note per axis to compare — omitted for 6-note mode.
-function proj3DRatioSuffix(fa, fb, k) {
-  if (k !== 1) return '';
-  const [r, iv] = describeRatio(fa, fb);
+// Ratio annotation only makes sense when there's exactly one note on each of
+// the two axes being compared — omitted otherwise (more than one per axis,
+// or momentary mode having left one of them empty).
+function proj3DRatioSuffix(groupA, groupB) {
+  if (groupA.length !== 1 || groupB.length !== 1) return '';
+  const [r, iv] = describeRatio(groupA[0].freq, groupB[0].freq);
   return `   [${r}${iv ? ` – ${iv}` : ''}]`;
 }
 
 function updateCube3DFull() {
-  const n = state3d.noteCount, k = n / 3;
-  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
-  const [x, y, z] = lissajous3(freqs, state3d.phiY, state3d.phiZ);
+  const [xGroup, yGroup, zGroup] = currentNoteGroups();
+  const xFreqs = xGroup.map(n => n.freq), yFreqs = yGroup.map(n => n.freq), zFreqs = zGroup.map(n => n.freq);
+  const [x, y, z] = lissajous3([xFreqs, yFreqs, zFreqs], state3d.phiY, state3d.phiZ);
   _last3D = [x, y, z];
 
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
@@ -895,27 +1049,30 @@ function updateCube3DFull() {
   renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
   renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
 
-  const [fx, fy, fz] = [freqs[0], freqs[k], freqs[2 * k]];
-  projTopTitleEl.textContent   = `TOP (X–Z)${proj3DRatioSuffix(fx, fz, k)}`;
-  projFrontTitleEl.textContent = `FRONT (X–Y)${proj3DRatioSuffix(fx, fy, k)}`;
-  projSideTitleEl.textContent  = `SIDE (Y–Z)${proj3DRatioSuffix(fy, fz, k)}`;
+  // Color-codes the axis letters to double as a legend for which of the
+  // three key/curve colors is which axis — otherwise nothing on screen says
+  // so once the (axis-labeled) slot boxes are hidden in momentary mode.
+  projTopTitleEl.innerHTML   = `TOP (${axisLetterHtml('X')}–${axisLetterHtml('Z')})${proj3DRatioSuffix(xGroup, zGroup)}`;
+  projFrontTitleEl.innerHTML = `FRONT (${axisLetterHtml('X')}–${axisLetterHtml('Y')})${proj3DRatioSuffix(xGroup, yGroup)}`;
+  projSideTitleEl.innerHTML  = `SIDE (${axisLetterHtml('Y')}–${axisLetterHtml('Z')})${proj3DRatioSuffix(yGroup, zGroup)}`;
 
+  const freqs = [...xFreqs, ...yFreqs, ...zFreqs];
   if (audioEngine.on) audioEngine.setFreqs(freqs);
 }
 
 // Fast path for phase-slider drags: recompute the curve but skip re-reading
 // note/frequency state (unchanged) — mirrors updateCurveFast().
 function updateCube3DFast() {
-  const n = state3d.noteCount;
-  const freqs = Array.from({ length: n }, (_, i) => noteFreq(state3d.notes[i], state3d.octs[i], state3d.temp));
-  const [x, y, z] = lissajous3(freqs, state3d.phiY, state3d.phiZ);
+  const [xGroup, yGroup, zGroup] = currentNoteGroups();
+  const xFreqs = xGroup.map(n => n.freq), yFreqs = yGroup.map(n => n.freq), zFreqs = zGroup.map(n => n.freq);
+  const [x, y, z] = lissajous3([xFreqs, yFreqs, zFreqs], state3d.phiY, state3d.phiZ);
   _last3D = [x, y, z];
   renderCube3DToCtx(cube3dCtx, CUBE_SIZE, x, y, z);
   syncViz();
   renderCurveToCtx(projTopCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, z);
   renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
   renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
-  if (audioEngine.on) audioEngine.setFreqs(freqs);
+  if (audioEngine.on) audioEngine.setFreqs([...xFreqs, ...yFreqs, ...zFreqs]);
 }
 
 // Rotation-only redraw for dragging the cube — the curve itself hasn't
@@ -928,8 +1085,8 @@ function redrawCube3DRotationOnly() {
   syncViz();
 }
 
-function renderCube3DSnapshot(freqs, phiY, phiZ, size = 480) {
-  const [x, y, z] = lissajous3(freqs, phiY, phiZ);
+function renderCube3DSnapshot(freqGroups, phiY, phiZ, size = 480) {
+  const [x, y, z] = lissajous3(freqGroups, phiY, phiZ);
   const off = document.createElement('canvas');
   off.width = size; off.height = size;
   const ctx = off.getContext('2d');
@@ -1133,19 +1290,24 @@ function resizeCube3D() {
   const panel = document.querySelector('.panel');
   const available = (panel && panel.clientWidth) || CUBE3D_BASE_TOTAL;
   const cubeSize = CURVE_SIZE;
+  // Momentary mode hides the note-slot column entirely (see
+  // updateInputModeUI()) — a hidden flex item takes no width and no gap, so
+  // its budget needs to go entirely to the rest of the row instead.
+  const slotsHidden = slots3DEl.hidden;
   // 6-note mode shows two note-cards per axis row (X1/X2, Y1/Y2, Z1/Z2)
   // side by side instead of one tall stack, so that column needs roughly
   // double the width to stay legible.
-  const slotsBase = CUBE3D_BASE_SLOTS_W * (state3d.noteCount === 6 ? 2 : 1);
+  const slotsBase = slotsHidden ? 0 : CUBE3D_BASE_SLOTS_W * (state3d.noteCount === 6 ? 2 : 1);
+  const gapCount = slotsHidden ? 2 : 3;
   const othersBase = slotsBase + CUBE3D_BASE_SIDE + CUBE3D_BASE_TOPFRONT;
-  const remaining = available - cubeSize - 3 * CUBE3D_ROW_GAP;
+  const remaining = available - cubeSize - gapCount * CUBE3D_ROW_GAP;
   const scale = Math.max(0.2, remaining / othersBase);
 
   const slotsW = Math.round(slotsBase * scale);
   const sideSize = Math.round(CUBE3D_BASE_SIDE * scale);
   const topFrontSize = Math.round(CUBE3D_BASE_TOPFRONT * scale);
 
-  slots3DEl.style.width = `${slotsW}px`;
+  if (!slotsHidden) slots3DEl.style.width = `${slotsW}px`;
   sizeCanvas(cube3dCanvas, cube3dCtx, cubeSize);
   sizeCanvas(projSideCanvas, projSideCtx, sideSize);
   sizeCanvas(projTopCanvas, projTopCtx, topFrontSize);
@@ -1466,18 +1628,22 @@ window.addEventListener('keydown', (ev) => {
   const key = ev.key.toLowerCase();
   const st = activeState();
   const n = activeSlotCount();
-  const digits = Array.from({ length: n }, (_, i) => String(i + 1));
 
-  if (digits.includes(key)) {
-    st.activeSlot = Number(key) - 1;
-    redrawSlots();
-    return;
-  }
-  if (ev.key === 'Tab') {
-    ev.preventDefault();
-    st.activeSlot = (st.activeSlot + 1) % n;
-    redrawSlots();
-    return;
+  // Slot/axis selection only means something in latch mode — momentary mode
+  // has no fixed slots to select.
+  if (inputMode === 'latch') {
+    const digits = Array.from({ length: n }, (_, i) => String(i + 1));
+    if (digits.includes(key)) {
+      st.activeSlot = Number(key) - 1;
+      redrawSlots();
+      return;
+    }
+    if (ev.key === 'Tab') {
+      ev.preventDefault();
+      st.activeSlot = (st.activeSlot + 1) % n;
+      redrawSlots();
+      return;
+    }
   }
   if (key === '[') {
     st.baseOctave = Math.max(PIANO_OCT_LOW, st.baseOctave - 1);
@@ -1496,24 +1662,45 @@ window.addEventListener('keydown', (ev) => {
   }
   if (key in KB_MAP) {
     ev.preventDefault();
+    if (ev.repeat) return; // held key auto-repeats keydown; momentary mode already has it down
     const [semi, octOff] = KB_MAP[key];
     const note = NOTE_NAMES[semi];
     let octave = st.baseOctave + octOff;
     octave = Math.max(PIANO_OCT_LOW, Math.min(PIANO_OCT_HIGH, octave));
-    const slot = st.activeSlot;
-    st.notes[slot] = note;
-    st.octs[slot] = octave;
-    st.activeSlot = (slot + 1) % n;
-    fullRedraw();
+    if (inputMode === 'momentary') {
+      addHeldNote(key, note, octave, 'kbd');
+    } else {
+      const slot = st.activeSlot;
+      st.notes[slot] = note;
+      st.octs[slot] = octave;
+      st.activeSlot = (slot + 1) % n;
+      fullRedraw();
+    }
   }
 });
+
+window.addEventListener('keyup', (ev) => {
+  const activeTag = document.activeElement && document.activeElement.tagName;
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+  if (inputMode !== 'momentary') return;
+  const key = ev.key.toLowerCase();
+  if (key in KB_MAP) removeHeldNote(key);
+});
+
+// Safety net: if a keyup is missed (e.g. alt-tabbing away mid-note), don't
+// leave a note stuck on forever.
+window.addEventListener('blur', releaseAllKeyboardHeldNotes);
 
 // ---------------------------------------------------------------------------
 // MIDI input (Web MIDI API)
 // ---------------------------------------------------------------------------
-function handleMidiNote(midiNote) {
+function handleMidiNoteOn(midiNote) {
   const note = NOTE_NAMES[midiNote % 12];
   const octave = Math.floor(midiNote / 12) - 1;
+  if (inputMode === 'momentary') {
+    addHeldNote(`midi-${midiNote}`, note, octave, 'midi');
+    return;
+  }
   const st = activeState();
   const n = activeSlotCount();
   const slot = st.activeSlot;
@@ -1521,6 +1708,10 @@ function handleMidiNote(midiNote) {
   st.octs[slot] = octave;
   st.activeSlot = (slot + 1) % n;
   fullRedraw();
+}
+
+function handleMidiNoteOff(midiNote) {
+  if (inputMode === 'momentary') removeHeldNote(`midi-${midiNote}`);
 }
 
 function initMidi() {
@@ -1540,7 +1731,8 @@ function initMidi() {
       input.onmidimessage = (msg) => {
         const [status, note, velocity] = msg.data;
         const type = status & 0xf0;
-        if (type === 0x90 && velocity > 0) handleMidiNote(note);
+        if (type === 0x90 && velocity > 0) handleMidiNoteOn(note);
+        else if (type === 0x80 || (type === 0x90 && velocity === 0)) handleMidiNoteOff(note);
       };
     }
     access.onstatechange = () => { /* device list changed; simple app, ignore */ };
@@ -1671,8 +1863,9 @@ function savePreset() {
   let image, preset;
 
   if (mode === '2d') {
-    const freqs = Array.from({ length: st.noteCount }, (_, i) => noteFreq(st.notes[i], st.octs[i], st.temp));
-    try { image = renderCurveSnapshot(freqs, st.phiX, st.phiXY); } catch (e) { image = null; }
+    const [xGroup, yGroup] = currentNoteGroups();
+    const groups = [xGroup.map(n => n.freq), yGroup.map(n => n.freq)];
+    try { image = renderCurveSnapshot(groups, st.phiX, st.phiXY); } catch (e) { image = null; }
     preset = {
       name, mode: '2d', noteCount: st.noteCount,
       notes: [...st.notes], octaves: [...st.octs],
@@ -1681,8 +1874,9 @@ function savePreset() {
       created: new Date().toISOString(),
     };
   } else {
-    const freqs = Array.from({ length: st.noteCount }, (_, i) => noteFreq(st.notes[i], st.octs[i], st.temp));
-    try { image = renderCube3DSnapshot(freqs, st.phiY, st.phiZ); } catch (e) { image = null; }
+    const [xGroup, yGroup, zGroup] = currentNoteGroups();
+    const groups = [xGroup.map(n => n.freq), yGroup.map(n => n.freq), zGroup.map(n => n.freq)];
+    try { image = renderCube3DSnapshot(groups, st.phiY, st.phiZ); } catch (e) { image = null; }
     preset = {
       name, mode: '3d', noteCount: st.noteCount,
       notes: [...st.notes], octaves: [...st.octs],
@@ -1796,9 +1990,15 @@ const pianoHintEl = $('#pianoHint');
 const pageTitleEl = $('#pageTitle');
 
 function updatePianoHint() {
-  const n = activeSlotCount();
-  const base = 'Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
-    `[ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;${n} / Tab select ${mode === '2d' ? 'slot' : 'axis'} &nbsp;&middot;&nbsp; Space = sound on/off`;
+  let base;
+  if (inputMode === 'momentary') {
+    base = 'Hold a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
+      '[ ] shift octave &nbsp;&middot;&nbsp; Space = sound on/off';
+  } else {
+    const n = activeSlotCount();
+    base = 'Click a key &nbsp;&middot;&nbsp; A&ndash;J = C&ndash;B (home oct) &nbsp;&middot;&nbsp; K,O,L,P = next oct &nbsp;&middot;&nbsp; ' +
+      `[ ] shift octave &nbsp;&middot;&nbsp; 1&ndash;${n} / Tab select ${mode === '2d' ? 'slot' : 'axis'} &nbsp;&middot;&nbsp; Space = sound on/off`;
+  }
   pianoHintEl.innerHTML = mode === '2d' ? base : `${base} &nbsp;&middot;&nbsp; Drag cube to rotate`;
 }
 
@@ -1806,7 +2006,7 @@ function setMode(newMode) {
   mode = newMode;
   mode2DEl.hidden = mode !== '2d';
   mode3DEl.hidden = mode !== '3d';
-  exportStlBtn.hidden = mode !== '3d';
+  updateExportStlVisibility();
   modeToggleBtn.textContent = mode === '2d' ? '3D View →' : '2D View →';
   pageTitleEl.textContent = mode === '2d' ? '2D LISSAJOUS CURVE' : '3D LISSAJOUS CURVE';
   phiLabelAEl.textContent = mode === '2d' ? 'φ inner X' : 'φ Y';
@@ -1845,12 +2045,14 @@ function resizeCanvas() {
   curveCanvas.width = size * dpr;
   curveCanvas.height = size * dpr;
   curveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  yLabelEl.style.maxHeight = `${size}px`; // never let it grow taller than the curve
 }
 
 resizeCanvas();
 resizeCube3D();
 initTempButtons();
 updateNoteCountUI();
+updateInputModeUI();
 updatePianoHint();
 initPiano();
 initSlots();

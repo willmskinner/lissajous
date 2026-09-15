@@ -10,7 +10,7 @@
     --white:    #e8eaf0;
     --dim:      #2a3a4a;
     --x-col:    #ff9955;
-    --y-col:    #55ccff;
+    --y-col:    #4ade80;
     --curve:    #00d4ff;
     --accent:   #00d4ff;
     --btn-on:   #1c3a5c;
@@ -43,7 +43,7 @@
   }
   .title-row {
     display: flex; align-items: center; justify-content: center; gap: 12px;
-    width: 100%; max-width: 1080px; margin: 4px 0 10px; position: relative;
+    width: 100%; max-width: 1180px; margin: 4px 0 10px; position: relative;
   }
   .title-btn-group { position: absolute; right: 0; display: flex; gap: 6px; }
   .mode-toggle-btn {
@@ -72,7 +72,7 @@
   }
   #vizOverlay[hidden] { display: none; }
 
-  .panel { width: 100%; max-width: 1080px; }
+  .panel { width: 100%; max-width: 1180px; }
 
   /* ---- temperament row ---- */
   .temp-row { display: flex; gap: 3px; width: 100%; margin-top: 14px; }
@@ -87,10 +87,11 @@
 
   /* ---- note-count row ---- */
   .notecount-row { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  .notecount-row[hidden] { display: none; }
   .notecount-opt {
     display: flex; align-items: center; justify-content: center; gap: 5px;
     background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off);
-    border-radius: 3px; padding: 5px 9px; font-size: 11px; cursor: pointer; white-space: nowrap;
+    border-radius: 3px; padding: 5px 7px; font-size: 11px; cursor: pointer; white-space: nowrap;
   }
   .notecount-opt:has(input:checked) { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 2px; }
   .notecount-opt[hidden] { display: none; }
@@ -98,26 +99,26 @@
 
   /* ---- phase / audio controls row ---- */
   .controls-row {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
     margin-bottom: 6px;
   }
-  .phase-group { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; }
-  .phase-ctrl { display: flex; align-items: center; gap: 6px; }
+  .phase-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .phase-ctrl { display: flex; align-items: center; gap: 5px; }
   .anim-btn {
-    width: 26px; height: 26px; border-radius: 3px; background: var(--btn-off);
-    border: 1px solid var(--btn-edge-off); color: var(--white); font-size: 13px; cursor: pointer;
+    width: 24px; height: 24px; border-radius: 3px; background: var(--btn-off);
+    border: 1px solid var(--btn-edge-off); color: var(--white); font-size: 12px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
   .anim-btn.on { background: var(--btn-on); border-color: var(--btn-edge-on); border-width: 1.5px; color: var(--accent); }
   .slider-block { display: flex; flex-direction: column; align-items: center; }
   .slider-block label { font-size: 10px; color: var(--white); margin-bottom: 1px; }
-  .slider-block input[type=range] { width: 130px; accent-color: #996633; }
+  .slider-block input[type=range] { width: 100px; accent-color: #996633; }
   .slider-block.pxy input[type=range] { accent-color: #664499; }
 
   .audio-strip { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
   .aud-btn {
     background: var(--btn-off); color: #778899; border: 1px solid var(--btn-edge-off); border-radius: 3px;
-    padding: 5px 8px; font-size: 11px; cursor: pointer;
+    padding: 5px 7px; font-size: 11px; cursor: pointer;
   }
   .aud-btn.on { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 1.5px; }
   #audOn {
@@ -126,13 +127,15 @@
   #audOn.on { background: var(--orange-bg-on); border-color: var(--orange); border-width: 2px; color: var(--orange); }
   .vol-block { display: flex; flex-direction: column; align-items: center; }
   .vol-block label { font-size: 10px; }
-  .vol-block input[type=range] { width: 80px; accent-color: #2a5a3a; }
+  .vol-block input[type=range] { width: 64px; accent-color: #2a5a3a; }
 
   .midi-status { text-align: center; font-size: 11px; font-style: italic; color: #556677; margin: 4px 0; min-height: 1.4em; }
 
   /* ---- piano ---- */
   .piano-hint { text-align: center; font-size: 10.5px; color: #7a8fa8; margin: 14px 0 4px; padding: 0 4px; }
-  .piano-scroll { width: 100%; overflow-x: auto; padding-bottom: 4px; }
+  .piano-scroll {
+    width: 100%; overflow-x: auto; overflow-y: visible; padding-bottom: 16px;
+  }
   .piano {
     position: relative; height: 108px; background: var(--bg); border: 1px solid var(--dim);
     border-radius: 4px; min-width: 640px;
@@ -165,6 +168,7 @@
   /* ---- main row: slots + curve ---- */
   .main-row { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 8px; }
   .slots-col { display: flex; flex-direction: column; gap: 6px; width: 108px; flex: 0 0 auto; }
+  .slots-col[hidden] { display: none; }
   .slot {
     flex: 1; background: #070813; border: 1px solid #445566; border-radius: 4px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -181,10 +185,19 @@
   .curve-mid { display: flex; align-items: center; width: 100%; justify-content: center; }
   .y-label {
     writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; color: var(--y-col);
-    margin-right: 4px; white-space: nowrap;
+    margin-right: 4px; white-space: nowrap; overflow: hidden;
+    /* Capped (and JS keeps it synced to the canvas's actual height) so a long
+       momentary-mode note list can't grow taller than the curve and push the
+       piano/controls down. */
+    max-height: 560px;
   }
   canvas#curve { background: var(--bg); border-radius: 4px; max-width: 100%; }
-  .x-label { font-size: 10px; color: var(--x-col); margin-top: 3px; text-align: center; }
+  .x-label {
+    font-size: 10px; color: var(--x-col); margin-top: 3px; text-align: center;
+    /* Reserves room for 2 lines up front so wrapping (long momentary-mode
+       note lists) doesn't change this row's height and shove things below. */
+    min-height: 2.6em; max-height: 2.6em; line-height: 1.3; overflow: hidden;
+  }
 
   /* ---- presets row ---- */
   .preset-row {
@@ -217,6 +230,7 @@
     justify-content: center; flex-wrap: wrap;
   }
   .slots-col-3d { display: flex; flex-direction: column; gap: 6px; width: 104px; flex: 0 0 auto; }
+  .slots-col-3d[hidden] { display: none; }
   .axis-row-3d { display: flex; flex-direction: row; gap: 6px; }
   .slots-col-3d .slot { min-height: 92px; min-width: 0; }
   .cube3d-wrap { display: flex; flex-direction: column; align-items: center; }
@@ -348,29 +362,34 @@
       <label class="notecount-opt"><input type="radio" name="noteCount" id="ncRadio1"><span id="ncText1"></span></label>
       <label class="notecount-opt"><input type="radio" name="noteCount" id="ncRadio2"><span id="ncText2"></span></label>
     </div>
+
+    <div class="notecount-row" id="inputModeRow" title="Latch: a key stays active until reassigned. Momentary: a key is only active while held — for playing live.">
+      <label class="notecount-opt"><input type="radio" name="inputMode" id="modeLatchRadio" value="latch" checked><span>Latch</span></label>
+      <label class="notecount-opt"><input type="radio" name="inputMode" id="modeMomentaryRadio" value="momentary"><span>Momentary</span></label>
+    </div>
   </div>
 
   <div class="midi-status" id="midiStatus"></div>
 
   <div class="preset-row">
-    <input type="text" class="preset-input" id="presetName" placeholder="preset name…">
-    <button class="preset-btn" id="presetSave">Save</button>
-    <button class="preset-btn" id="presetPrev">&#9664;</button>
-    <a id="presetThumbLink" target="_blank" rel="noopener" title="Open snapshot image">
+    <input type="text" class="preset-input preset-only" id="presetName" placeholder="preset name…">
+    <button class="preset-btn preset-only" id="presetSave">Save</button>
+    <button class="preset-btn preset-only" id="presetPrev">&#9664;</button>
+    <a id="presetThumbLink" class="preset-only" target="_blank" rel="noopener" title="Open snapshot image">
       <img id="presetThumb" class="preset-thumb" alt="">
     </a>
-    <span class="preset-label" id="presetLabel"></span>
-    <button class="preset-btn" id="presetNext">&#9654;</button>
-    <button class="preset-btn" id="presetDelete">Delete</button>
-    <button class="preset-btn" id="presetExport">Export &uarr;</button>
-    <button class="preset-btn" id="presetImport">Import &darr;</button>
+    <span class="preset-label preset-only" id="presetLabel"></span>
+    <button class="preset-btn preset-only" id="presetNext">&#9654;</button>
+    <button class="preset-btn preset-only" id="presetDelete">Delete</button>
+    <button class="preset-btn preset-only" id="presetExport">Export &uarr;</button>
+    <button class="preset-btn preset-only" id="presetImport">Import &darr;</button>
     <input type="file" id="presetImportFile" accept="application/json" hidden>
     <button class="preset-btn" id="exportStlBtn" title="Export as a tube mesh for 3D printing" hidden>&#128424;&nbsp; Export STL</button>
   </div>
-  <div class="preset-status" id="presetStatus"></div>
+  <div class="preset-status preset-only" id="presetStatus"></div>
 
   <footer>
-    Web port of the <a href="https://github.com/willmskinner/lissajous/tree/master" target="_blank" rel="noopener">Python original</a>
+    <a href="https://en.wikipedia.org/wiki/Lissajous_curve" target="_blank" rel="noopener">What is a Lissajou Curve?</a>
     &nbsp;&middot;&nbsp; MIDI &amp; audio require a browser with Web MIDI / Web Audio support (Chrome / Edge recommended)
   </footer>
 </div>
