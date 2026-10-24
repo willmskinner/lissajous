@@ -1109,8 +1109,8 @@ function renderCube3DSnapshot(freqGroups, phiY, phiZ, size = 480) {
 // format nearly every slicer (Cura, PrusaSlicer, Bambu Studio, …) expects.
 // ---------------------------------------------------------------------------
 const STL_WORLD_SCALE = 40;   // mm per unit — curve spans roughly ±1, so ~80mm overall
-const STL_TUBE_RADIUS = 1.5;  // mm — ~3mm diameter, sturdy enough for FDM printing
-const STL_TUBE_SIDES = 12;    // cross-section polygon
+const STL_TUBE_RADIUS = 3;    // mm — ~6mm diameter, sturdy enough for FDM printing
+const STL_TUBE_SIDES = 32;    // cross-section polygon — high enough to read as round, not faceted
 const STL_SAMPLE_EVERY = 6;   // thin N_POINTS_3D down to a print-friendly vertex count
 
 function v3sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
