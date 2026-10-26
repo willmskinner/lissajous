@@ -135,6 +135,7 @@
     background: var(--btn-off); color: var(--white); border: 1px solid var(--btn-edge-off); border-radius: 3px;
     padding: 4px 6px; font-size: 11px; max-width: 180px;
   }
+  .harm-select:disabled { opacity: 0.4; }
   .harm-pitch { font-size: 11px; color: var(--accent); min-width: 6.5em; font-variant-numeric: tabular-nums; }
   .harm-status { font-size: 11px; font-style: italic; color: #556677; }
 
@@ -384,6 +385,11 @@
       <label class="notecount-opt"><input type="radio" name="harmChar" id="harmCharNatural" checked><span>Natural</span></label>
       <label class="notecount-opt"><input type="radio" name="harmChar" id="harmCharMessina"><span>Messina</span></label>
     </div>
+    <select class="harm-select" id="harmTone" disabled title="Messina synth tone. Soft: rounded and mellow. Choir: three slightly detuned saws per note, an ensemble shimmer. Saw: the brightest and most robotic.">
+      <option value="soft">Soft</option>
+      <option value="choir">Choir</option>
+      <option value="saw">Saw</option>
+    </select>
     <select class="harm-select" id="harmInput" title="Microphone / audio interface input">
       <option value="">Default input</option>
     </select>

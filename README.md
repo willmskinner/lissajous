@@ -47,7 +47,9 @@ harmony voice, in the spirit of Jacob Collier's harmonizer and Bon Iver's
   you.
 - **Messina**: your voice shapes a synth chord (a vocoder). This gives the
   robotic, hard-tuned Bon Iver sound. Hold the note you're singing as well
-  if you want the lead line processed too.
+  if you want the lead line processed too. The menu next to it picks the
+  synth tone: **Soft** (rounded and mellow), **Choir** (three slightly
+  detuned saws per note) or **Saw** (the brightest and most robotic).
 
 and a way of playing:
 
@@ -64,9 +66,11 @@ How it works: `harmonizer-worklet.js` detects the input pitch (YIN).
 - **Natural** re-spaces individual pitch periods of the real signal
   (TD-PSOLA) to land on each target note. Because it moves whole periods
   instead of resampling, the voice keeps its own vowel color and doesn't go
-  chipmunk.
+  chipmunk. Each voice is levelled to the input, since how loud a shifted
+  copy comes out depends on how far it moves and where its harmonics land
+  among the vowel's resonances.
 - **Messina** splits the mic into 22 bands and imposes each band's loudness
-  on the same band of a sawtooth chord at the target notes. Consonants
+  on the same band of a synth chord at the target notes. Consonants
   switch in a noise carrier, so they come through as a whisper. The input
   pitch only decides voiced vs. unvoiced, so this character tolerates
   breathy or off-pitch singing that Natural would warble on.

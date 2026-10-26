@@ -1641,6 +1641,7 @@ class Harmonizer {
     this.ctx = null;
     this.on = false;
     this.character = 'natural'; // 'natural' (re-pitched copies of the voice) or 'messina' (vocoder)
+    this.tone = 'soft';         // messina synth tone: 'soft', 'choir' or 'saw'
     this.mix = 1;
     this.dry = false;
     this.range = 'low';
@@ -1669,7 +1670,7 @@ class Harmonizer {
     this.voiceNode = new AudioWorkletNode(ctx, 'harmonizer', {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
       channelCount: 1, channelCountMode: 'explicit', // a stereo interface gets summed to mono
-      processorOptions: { minF0: HARM_MIN_F0[this.range], character: this.character },
+      processorOptions: { minF0: HARM_MIN_F0[this.range], character: this.character, tone: this.tone },
     });
     this.voiceNode.port.onmessage = (e) => {
       if (e.data.type === 'pitch' && this.onPitch) this.onPitch(e.data);
@@ -1737,6 +1738,11 @@ class Harmonizer {
     if (this.voiceNode) this.voiceNode.port.postMessage({ type: 'config', character });
   }
 
+  setTone(tone) {
+    this.tone = tone;
+    if (this.voiceNode) this.voiceNode.port.postMessage({ type: 'config', tone });
+  }
+
   async listInputs() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
     return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
@@ -1778,6 +1784,7 @@ const slHarm = $('#slHarm');
 const harmDryBtn = $('#harmDry');
 const harmRangeRadios = { low: $('#harmRangeLow'), high: $('#harmRangeHigh') };
 const harmCharRadios = { natural: $('#harmCharNatural'), messina: $('#harmCharMessina') };
+const harmToneSel = $('#harmTone');
 const harmPitchEl = $('#harmPitch');
 const harmStatusEl = $('#harmStatus');
 let harmStarting = false;
@@ -1855,8 +1862,15 @@ for (const key in harmRangeRadios) {
   harmRangeRadios[key].addEventListener('change', () => harmonizer.setRange(key));
 }
 for (const key in harmCharRadios) {
-  harmCharRadios[key].addEventListener('change', () => harmonizer.setCharacter(key));
+  harmCharRadios[key].addEventListener('change', () => {
+    harmonizer.setCharacter(key);
+    harmToneSel.disabled = key !== 'messina';
+  });
 }
+harmToneSel.addEventListener('change', () => {
+  harmToneSel.blur(); // so the note keys don't step through the options
+  harmonizer.setTone(harmToneSel.value);
+});
 if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   navigator.mediaDevices.addEventListener('devicechange', refreshHarmInputs);
 }

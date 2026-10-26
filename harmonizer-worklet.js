@@ -9,12 +9,17 @@
 //   survive the shift instead of going chipmunk/monster. Each grain is taken
 //   from the most recent fully-received period, which keeps the delay to
 //   roughly 2.5–3 input periods (measured ~10 ms at 220 Hz, ~27 ms at 110 Hz).
+//   How loud the overlapped grains come out depends on the shift ratio and on
+//   where the new harmonics land relative to the vowel's formants (an "ee"
+//   moved up two octaves can lose 30 dB), so each voice is scaled to the
+//   power of the input it was made from.
 //
 // messina — channel vocoder, the robotic Bon Iver sound. The mic is split
 //   into bands and each band's loudness is imposed on the same band of a
-//   synthetic carrier (one sawtooth per target, noise during consonants), so
-//   the chord "speaks" with the singer's vowels. Nothing waits for a pitch
-//   period, so the delay is a few ms regardless of the input pitch.
+//   synthetic carrier (an oscillator or a detuned trio per target, in one of
+//   three tones, plus noise during consonants), so the chord "speaks" with
+//   the singer's vowels. Nothing waits for a pitch period, so the delay is a
+//   few ms regardless of the input pitch.
 // ---------------------------------------------------------------------------
 const MAX_HARM_VOICES = 8;
 const RING = 16384;               // power of two — many times the longest grain, even at 96 kHz
@@ -35,6 +40,8 @@ const RATIO_MIN = 0.25, RATIO_MAX = 4;   // ±2 octaves
 const GATE_RAMP_S = 0.005;
 const REPORT_EVERY_S = 0.05;
 const PSOLA_DELAY_PERIODS = 2.75; // measured onset delay, in input periods, reported to the UI
+const LEVEL_MATCH_MAX = 10;       // most a voice is boosted to match the input (+20 dB)
+const LEVEL_MATCH_S = 0.02;       // smoothing of that gain
 const LEVEL_RELEASE_S = 0.05;     // full-band input level, used by the vocoder's gate
 
 const VOC_BANDS = 22;
@@ -44,10 +51,18 @@ const VOC_Q_CORNER_HZ = 400, VOC_Q_MIN = 1.5; // …widening below the corner, s
 const VOC_ENV_PERIODS = 1;        // mic band envelope smoothing, in periods of the band centre
 const VOC_ENV_MIN_S = 0.003, VOC_ENV_MAX_S = 0.008; // floor: faster lets the singer's own pitch buzz through
 const VOC_CARRIER_RELEASE_S = 0.02; // carrier band envelope: instant attack, so a new note can't overshoot
-const VOC_PREEMPH = 0.9;          // flattens the sawtooth's falling spectrum so the top bands have carrier to shape
 const VOC_CARRIER_FLOOR = 0.002;  // stops near-empty carrier bands being boosted without limit
-const VOC_TRIM = 1.85;            // output level, matched to the natural character
 const VOC_DELAY_MIN_MS = 7;       // measured vocoder onset delay: ~7 ms, or one input period for low voices
+// Carrier tones. Each band is levelled to the voice, but its filter also lets
+// through some carrier from well outside the band, so a carrier with strong
+// upper harmonics adds a buzz of treble the voice never had; the softer tones
+// let their harmonics fall away faster. Per tone: oscillator shape, detune of
+// each oscillator per note (cents), carrier pre-emphasis, output trim.
+const VOC_TONES = {
+  saw:   { shape: 'saw',      detune: [0],          preemph: 0.9, trim: 2.2 },
+  soft:  { shape: 'parabola', detune: [0],          preemph: 0,   trim: 2.0 },
+  choir: { shape: 'saw',      detune: [-10, 0, 10], preemph: 0,   trim: 2.15 },
+};
 
 // Hann window lookup over [-1, 1]
 const HANN_RES = 1024;
@@ -71,6 +86,8 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     this.gate = Math.pow(10, (opts.gateDb != null ? opts.gateDb : -50) / 20);
     this.level = 0;
     this.character = opts.character || 'natural';
+    this.tone = opts.tone || 'soft';
+    this.activeTone = this.tone;  // lags this.tone while a tone change fades out
 
     this.f0 = 0;
     this.period = 0;              // input samples per cycle (sampleRate / f0)
@@ -85,13 +102,20 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     this.markCount = 0;
     this.lastMark = 0;
 
+    this.grain = new Float32Array(RING / 2); // windowed grain around the current analysis mark
+    this.grainCorr = new Float64Array(RING / 2); // its autocorrelation by lag, filled on demand (NaN = not yet)
+    this.grainPos = -1;
+    this.grainHalf = 0;
+    this.grainPower = 0;
+
     this.voices = Array.from({ length: MAX_HARM_VOICES }, () => ({
       target: 0,                  // Hz the keyboard wants (0 = released)
       hz: 0,                      // Hz being synthesized (holds the last target while fading out)
       out: new Float32Array(RING),
       next: -1,                   // absolute position of the next synthesis mark (-1 = idle)
+      level: 1,                   // grain scale that matches the voice's power to the input's
       gain: 0,
-      phase: 0,                   // vocoder carrier oscillator
+      phases: new Float64Array(3), // vocoder carrier oscillators
       carGain: 0,
     }));
     this.gainStep = 1 / (GATE_RAMP_S * sampleRate);
@@ -122,6 +146,7 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
       if (msg.minF0) this.setMinF0(msg.minF0);
       if (msg.gateDb != null) this.gate = Math.pow(10, msg.gateDb / 20);
       if (msg.character) this.character = msg.character;
+      if (msg.tone) this.tone = msg.tone;
     }
   }
 
@@ -225,29 +250,67 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     return -1;
   }
 
+  // Hann-windowed copy of the input around an analysis mark (±T), shared by all voices.
+  loadGrain(a, T) {
+    if (a === this.grainPos) return;
+    const half = Math.ceil(T), scale = HANN_RES / half, g = this.grain;
+    for (let k = -half; k <= half; k++) g[k + half] = HANN[((k + half) * scale + 0.5) | 0] * this.inBuf[(a + k) & MASK];
+    this.grainCorr.fill(NaN, 0, 2 * half + 2);
+    this.grainPos = a;
+    this.grainHalf = half;
+    this.grainPower = this.olaPower(T); // overlap-added at its own period, the grain rebuilds the input
+  }
+
+  grainCorrAt(lag) {
+    let r = this.grainCorr[lag];
+    if (r !== r) {
+      const g = this.grain, n = 2 * this.grainHalf + 1;
+      r = 0;
+      for (let i = 0; i + lag < n; i++) r += g[i] * g[i + lag];
+      this.grainCorr[lag] = r;
+    }
+    return r;
+  }
+
+  // Mean power of the grain overlap-added every `spacing` samples: the sum of
+  // its autocorrelation at multiples of the spacing (lags interpolated).
+  olaPower(spacing) {
+    const n = 2 * this.grainHalf + 1;
+    let sum = this.grainCorrAt(0);
+    for (let lag = spacing; lag < n - 1; lag += spacing) {
+      const i = Math.floor(lag), f = lag - i;
+      sum += 2 * ((1 - f) * this.grainCorrAt(i) + f * this.grainCorrAt(i + 1));
+    }
+    return Math.max(0, sum) / spacing;
+  }
+
   // ---- TD-PSOLA: overlap-add grains at the target pitch's spacing ----
   synthesize(blockStart, N) {
     const blockEnd = blockStart + N - 1;
     const markIdx = this.latestCompleteMark(blockEnd);
     const natural = this.character === 'natural';
+    const smooth = 1 - Math.exp(-N / (LEVEL_MATCH_S * sampleRate));
     for (const v of this.voices) {
       const want = v.target > 0 && this.voiced && natural;
       if (!want && v.next < 0) continue;
       if (markIdx < 0 || v.hz <= 0) continue;
-      const a = this.markPos[markIdx], T = this.markT[markIdx], half = Math.ceil(T);
-      if (v.next < blockStart) v.next = blockStart + half;
+      const T = this.markT[markIdx];
+      this.loadGrain(this.markPos[markIdx], T);
+      const half = this.grainHalf;
       const ratio = Math.min(RATIO_MAX, Math.max(RATIO_MIN, (T * v.hz) / sampleRate));
       const spacing = T / ratio;
-      const grainGain = ratio >= 1 ? 1 / ratio : 1 / Math.sqrt(ratio);
-      const scale = HANN_RES / half;
-      const inBuf = this.inBuf, out = v.out;
+      const outPower = this.olaPower(spacing);
+      const level = outPower > 0 ? Math.min(LEVEL_MATCH_MAX, Math.sqrt(this.grainPower / outPower)) : 1;
+      if (v.next < blockStart) { // starting (or restarting) — no fade from a stale level
+        v.next = blockStart + half;
+        v.level = level;
+      } else {
+        v.level += smooth * (level - v.level);
+      }
+      const g = this.grain, out = v.out, amp = v.level;
       while (v.next - half <= blockEnd) {
         const s = Math.round(v.next);
-        const kStart = Math.max(-half, blockStart - s);
-        let w = (kStart + half) * scale + 0.5; // +0.5 so the |0 below rounds
-        for (let k = kStart; k <= half; k++, w += scale) {
-          out[(s + k) & MASK] += grainGain * HANN[w | 0] * inBuf[(a + k) & MASK];
-        }
+        for (let k = Math.max(-half, blockStart - s); k <= half; k++) out[(s + k) & MASK] += amp * g[k + half];
         v.next += spacing;
       }
     }
@@ -279,7 +342,8 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
   }
 
   vocode(input, left, N) {
-    const goal = this.character === 'messina' && this.level > this.gate ? 1 : 0;
+    if (this.vocGain === 0) this.activeTone = this.tone; // a tone change fades out, swaps, then fades back in
+    const goal = this.character === 'messina' && this.level > this.gate && this.activeTone === this.tone ? 1 : 0;
     if (goal === 0 && this.vocGain === 0) return;
     if (!this.vocIn || this.vocIn.length !== N) {
       this.vocIn = new Float32Array(N);
@@ -291,33 +355,46 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     car.fill(0);
     acc.fill(0);
 
-    // carrier: a band-limited (polyBLEP) sawtooth per target…
+    // carrier: per target, one oscillator or a detuned trio — a band-limited
+    // (polyBLEP) sawtooth, or a parabola wave (harmonics falling at 1/k², smooth
+    // enough not to need band-limiting)…
+    const tone = VOC_TONES[this.activeTone] || VOC_TONES.soft;
+    const saw = tone.shape === 'saw', oscGain = 1 / Math.sqrt(tone.detune.length);
     let held = 0;
     for (const v of this.voices) {
       const want = v.target > 0 ? 1 : 0;
       if (want === 0 && v.carGain === 0) continue;
-      const dt = v.hz / sampleRate;
-      let phase = v.phase, g = v.carGain;
-      for (let i = 0; i < N; i++) {
-        if (g !== want) g = g < want ? Math.min(want, g + step) : Math.max(want, g - step);
-        let s = 2 * phase - 1;
-        if (phase < dt) { const t = phase / dt; s -= t + t - t * t - 1; }
-        else if (phase > 1 - dt) { const t = (phase - 1) / dt; s -= t * t + t + t + 1; }
-        car[i] += g * s;
-        phase += dt;
-        if (phase >= 1) phase -= 1;
+      let g = v.carGain;
+      for (let j = 0; j < tone.detune.length; j++) {
+        const dt = (v.hz * Math.pow(2, tone.detune[j] / 1200)) / sampleRate;
+        let phase = v.phases[j];
+        g = v.carGain;
+        for (let i = 0; i < N; i++) {
+          if (g !== want) g = g < want ? Math.min(want, g + step) : Math.max(want, g - step);
+          let s;
+          if (saw) {
+            s = 2 * phase - 1;
+            if (phase < dt) { const t = phase / dt; s -= t + t - t * t - 1; }
+            else if (phase > 1 - dt) { const t = (phase - 1) / dt; s -= t * t + t + t + 1; }
+          } else {
+            s = 6 * phase * (phase - 1) + 1;
+          }
+          car[i] += g * oscGain * s;
+          phase += dt;
+          if (phase >= 1) phase -= 1;
+        }
+        v.phases[j] = phase;
       }
-      v.phase = phase;
       v.carGain = g;
       if (g > held) held = g;
     }
     // …plus noise while the input is unvoiced, so consonants come through
-    const noiseGoal = this.voiced ? 0 : held;
+    const noiseGoal = this.voiced ? 0 : held, preemph = tone.preemph;
     let noise = this.noiseAmt, prev = this.prevCarrier;
     for (let i = 0; i < N; i++) {
       if (noise !== noiseGoal) noise = noise < noiseGoal ? Math.min(noiseGoal, noise + step) : Math.max(noiseGoal, noise - step);
       const c = car[i] + noise * (Math.random() * 2 - 1);
-      car[i] = c - VOC_PREEMPH * prev;
+      car[i] = c - preemph * prev;
       prev = c;
     }
     this.noiseAmt = noise;
@@ -362,7 +439,7 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     let g = this.vocGain;
     for (let i = 0; i < N; i++) {
       if (g !== goal) g = g < goal ? Math.min(goal, g + step) : Math.max(goal, g - step);
-      left[i] += VOC_TRIM * g * acc[i];
+      left[i] += tone.trim * g * acc[i];
     }
     this.vocGain = g;
   }
