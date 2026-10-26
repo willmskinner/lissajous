@@ -66,9 +66,10 @@ How it works: `harmonizer-worklet.js` detects the input pitch (YIN).
 - **Natural** re-spaces individual pitch periods of the real signal
   (TD-PSOLA) to land on each target note. Because it moves whole periods
   instead of resampling, the voice keeps its own vowel color and doesn't go
-  chipmunk. Each voice is levelled to the input, since how loud a shifted
-  copy comes out depends on how far it moves and where its harmonics land
-  among the vowel's resonances.
+  chipmunk. Each voice is levelled to sound as loud as the input, since how
+  loud a shifted copy comes out depends on how far it moves and where its
+  harmonics land among the vowel's resonances. Voices reach from three
+  octaves below to five octaves above the sung note.
 - **Messina** splits the mic into 22 bands and imposes each band's loudness
   on the same band of a synth chord at the target notes. Consonants
   switch in a noise carrier, so they come through as a whisper. The input

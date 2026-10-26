@@ -11,8 +11,11 @@
 //   roughly 2.5–3 input periods (measured ~10 ms at 220 Hz, ~27 ms at 110 Hz).
 //   How loud the overlapped grains come out depends on the shift ratio and on
 //   where the new harmonics land relative to the vowel's formants (an "ee"
-//   moved up two octaves can lose 30 dB), so each voice is scaled to the
-//   power of the input it was made from.
+//   moved up two octaves can lose 30 dB), so each voice is scaled to sound
+//   as loud as the input it was made from. Loudness is compared after
+//   A-weighting: a voice moved up puts its energy nearer 1–4 kHz, where the
+//   ear is most sensitive, so at equal power it would sound louder (an "ee"
+//   up two octaves by ~10 dB).
 //
 // messina — channel vocoder, the robotic Bon Iver sound. The mic is split
 //   into bands and each band's loudness is imposed on the same band of a
@@ -36,12 +39,13 @@ const VOICED_MAX_APERIODICITY = 0.2;
 const MAX_F0 = 1200;
 const OCTAVE_JUMP_FRAMES = 2;     // a sudden ~octave jump must repeat this many frames to be believed
 const UNVOICED_HANGOVER = 2;      // frames of "unvoiced" needed before the voices gate off
-const RATIO_MIN = 0.25, RATIO_MAX = 4;   // ±2 octaves
+const RATIO_MIN = 1 / 8, RATIO_MAX = 32; // −3 to +5 octaves: the whole keyboard, from any bass-to-soprano note
 const GATE_RAMP_S = 0.005;
 const REPORT_EVERY_S = 0.05;
 const PSOLA_DELAY_PERIODS = 2.75; // measured onset delay, in input periods, reported to the UI
 const LEVEL_MATCH_MAX = 10;       // most a voice is boosted to match the input (+20 dB)
 const LEVEL_MATCH_S = 0.02;       // smoothing of that gain
+const LOUDNESS_POLES_HZ = [107.7, 737.9]; // A-weighting's mid-band high-pass poles (the rest is outside the voice's range)
 const LEVEL_RELEASE_S = 0.05;     // full-band input level, used by the vocoder's gate
 
 const VOC_BANDS = 22;
@@ -102,8 +106,10 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     this.markCount = 0;
     this.lastMark = 0;
 
-    this.grain = new Float32Array(RING / 2); // windowed grain around the current analysis mark
-    this.grainCorr = new Float64Array(RING / 2); // its autocorrelation by lag, filled on demand (NaN = not yet)
+    this.grain = new Float32Array(RING / 2); // windowed grain around the current analysis mark, with a zero either side
+    this.grainHeard = new Float32Array(RING / 2); // the grain A-weighted, for comparing loudness
+    this.grainCorr = new Float64Array(RING / 2); // autocorrelation of that, by lag, filled on demand (NaN = not yet)
+    this.loudCoef = LOUDNESS_POLES_HZ.map(hz => 1 / (1 + (2 * Math.PI * hz) / sampleRate));
     this.grainPos = -1;
     this.grainHalf = 0;
     this.grainPower = 0;
@@ -217,6 +223,9 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
   }
 
   // ---- analysis marks: one per input period, snapped to the waveform peak ----
+  // The peak is located between samples: whole-sample marks wobble by up to
+  // half a sample from period to period, which at big shifts comes out as
+  // rough low tones under the harmony.
   trackMarks() {
     const latest = this.n - 1;
     const T = this.period || sampleRate / 150;
@@ -232,6 +241,8 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
           const v = this.inBuf[k & MASK];
           if (v > best) { best = v; m = k; }
         }
+        const y0 = this.inBuf[(m - 1) & MASK], y2 = this.inBuf[(m + 1) & MASK], den = y0 - 2 * best + y2;
+        if (den < 0) m += Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den));
       }
       this.markPos[this.markHead] = m;
       this.markT[this.markHead] = T;
@@ -245,17 +256,29 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
   latestCompleteMark(latest) {
     for (let i = 0; i < this.markCount; i++) {
       const idx = (this.markHead - 1 - i) & MARK_MASK;
-      if (this.markPos[idx] + Math.ceil(this.markT[idx]) <= latest) return idx;
+      if (this.markPos[idx] + Math.ceil(this.markT[idx]) + 1 <= latest) return idx;
     }
     return -1;
   }
 
-  // Hann-windowed copy of the input around an analysis mark (±T), shared by all voices.
+  // Hann-windowed copy of the input around an analysis mark (±T), shared by all
+  // voices. The mark falls between samples, so the input is interpolated.
   loadGrain(a, T) {
     if (a === this.grainPos) return;
-    const half = Math.ceil(T), scale = HANN_RES / half, g = this.grain;
-    for (let k = -half; k <= half; k++) g[k + half] = HANN[((k + half) * scale + 0.5) | 0] * this.inBuf[(a + k) & MASK];
-    this.grainCorr.fill(NaN, 0, 2 * half + 2);
+    const half = Math.ceil(T), scale = HANN_RES / half, g = this.grain, n = 2 * half + 1;
+    const a0 = Math.floor(a), f = a - a0, inBuf = this.inBuf;
+    for (let k = -half; k <= half; k++) {
+      const x = (1 - f) * inBuf[(a0 + k) & MASK] + f * inBuf[(a0 + k + 1) & MASK];
+      g[k + half + 1] = HANN[((k + half) * scale + 0.5) | 0] * x;
+    }
+    g[0] = g[n + 1] = 0;
+    const h = this.grainHeard;
+    h.set(g.subarray(1, n + 1));
+    for (const c of this.loudCoef) { // one-pole high-passes
+      let x1 = 0, y = 0;
+      for (let i = 0; i < n; i++) { const x = h[i]; y = c * (y + x - x1); x1 = x; h[i] = y; }
+    }
+    this.grainCorr.fill(NaN, 0, n + 1);
     this.grainPos = a;
     this.grainHalf = half;
     this.grainPower = this.olaPower(T); // overlap-added at its own period, the grain rebuilds the input
@@ -264,7 +287,7 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
   grainCorrAt(lag) {
     let r = this.grainCorr[lag];
     if (r !== r) {
-      const g = this.grain, n = 2 * this.grainHalf + 1;
+      const g = this.grainHeard, n = 2 * this.grainHalf + 1;
       r = 0;
       for (let i = 0; i + lag < n; i++) r += g[i] * g[i + lag];
       this.grainCorr[lag] = r;
@@ -272,8 +295,8 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
     return r;
   }
 
-  // Mean power of the grain overlap-added every `spacing` samples: the sum of
-  // its autocorrelation at multiples of the spacing (lags interpolated).
+  // Mean A-weighted power of the grain overlap-added every `spacing` samples:
+  // the sum of its autocorrelation at multiples of the spacing (lags interpolated).
   olaPower(spacing) {
     const n = 2 * this.grainHalf + 1;
     let sum = this.grainCorrAt(0);
@@ -307,10 +330,13 @@ class HarmonizerProcessor extends AudioWorkletProcessor {
       } else {
         v.level += smooth * (level - v.level);
       }
+      // Each grain lands at its exact (fractional) position, interpolated.
+      // Rounding to the nearest sample would jitter the spacing, and at big
+      // shifts that jitter turns formant energy into tones of its own.
       const g = this.grain, out = v.out, amp = v.level;
       while (v.next - half <= blockEnd) {
-        const s = Math.round(v.next);
-        for (let k = Math.max(-half, blockStart - s); k <= half; k++) out[(s + k) & MASK] += amp * g[k + half];
+        const s = Math.floor(v.next), b = amp * (v.next - s), a = amp - b;
+        for (let k = Math.max(-half, blockStart - s); k <= half + 1; k++) out[(s + k) & MASK] += a * g[k + half + 1] + b * g[k + half];
         v.next += spacing;
       }
     }
