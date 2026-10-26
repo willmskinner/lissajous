@@ -121,13 +121,22 @@
     padding: 5px 7px; font-size: 11px; cursor: pointer;
   }
   .aud-btn.on { background: var(--btn-on); color: var(--white); border-color: var(--btn-edge-on); border-width: 1.5px; }
-  #audOn {
+  #audOn, #harmOn {
     border-color: var(--orange-dim); color: var(--orange); font-weight: 700; border-width: 1.5px;
   }
-  #audOn.on { background: var(--orange-bg-on); border-color: var(--orange); border-width: 2px; color: var(--orange); }
+  #audOn.on, #harmOn.on { background: var(--orange-bg-on); border-color: var(--orange); border-width: 2px; color: var(--orange); }
   .vol-block { display: flex; flex-direction: column; align-items: center; }
   .vol-block label { font-size: 10px; }
   .vol-block input[type=range] { width: 64px; accent-color: #2a5a3a; }
+
+  /* ---- voice harmonizer row ---- */
+  .harm-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 4px; }
+  .harm-select {
+    background: var(--btn-off); color: var(--white); border: 1px solid var(--btn-edge-off); border-radius: 3px;
+    padding: 4px 6px; font-size: 11px; max-width: 180px;
+  }
+  .harm-pitch { font-size: 11px; color: var(--accent); min-width: 6.5em; font-variant-numeric: tabular-nums; }
+  .harm-status { font-size: 11px; font-style: italic; color: #556677; }
 
   .midi-status { text-align: center; font-size: 11px; font-style: italic; color: #556677; margin: 4px 0; min-height: 1.4em; }
 
@@ -367,6 +376,28 @@
       <label class="notecount-opt"><input type="radio" name="inputMode" id="modeLatchRadio" value="latch" checked><span>Latch</span></label>
       <label class="notecount-opt"><input type="radio" name="inputMode" id="modeMomentaryRadio" value="momentary"><span>Momentary</span></label>
     </div>
+  </div>
+
+  <div class="harm-row">
+    <button class="aud-btn" id="harmOn" title="Sing or play into the mic: each active note becomes a harmony voice. Use headphones, since a speaker next to the mic will feed back.">Voice off</button>
+    <div class="notecount-row" title="Natural: re-pitched copies of your own voice (Jacob Collier style). Messina: your voice shapes a synth chord, the robotic vocoder sound of Bon Iver's Messina.">
+      <label class="notecount-opt"><input type="radio" name="harmChar" id="harmCharNatural" checked><span>Natural</span></label>
+      <label class="notecount-opt"><input type="radio" name="harmChar" id="harmCharMessina"><span>Messina</span></label>
+    </div>
+    <select class="harm-select" id="harmInput" title="Microphone / audio interface input">
+      <option value="">Default input</option>
+    </select>
+    <div class="vol-block">
+      <label>Mix</label>
+      <input type="range" id="slHarm" min="0" max="2" step="0.01" value="1">
+    </div>
+    <button class="aud-btn" id="harmDry" title="Also play the unprocessed mic through the speakers. Leave off if your interface or mixer already monitors the dry voice, which adds no delay.">Dry</button>
+    <div class="notecount-row" title="Lowest pitch the detector listens for. Low: bass and baritone voices. High: tenor, alto, soprano and most instruments (fewer octave mistakes).">
+      <label class="notecount-opt"><input type="radio" name="harmRange" id="harmRangeLow" checked><span>Low voice</span></label>
+      <label class="notecount-opt"><input type="radio" name="harmRange" id="harmRangeHigh"><span>High voice</span></label>
+    </div>
+    <span class="harm-pitch" id="harmPitch"></span>
+    <span class="harm-status" id="harmStatus" title="Estimated delay of the harmony voices: input + processing + output"></span>
   </div>
 
   <div class="midi-status" id="midiStatus"></div>

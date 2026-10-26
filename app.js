@@ -851,7 +851,7 @@ function updateCurveFull() {
   yLabelEl.textContent = axisLabelText(yGroup.map(nn => nn.note), yGroup.map(nn => nn.octave), yFreqs);
 
   const freqs = [...xFreqs, ...yFreqs];
-  if (audioEngine.on) audioEngine.setFreqs(freqs);
+  syncAudioFreqs(freqs);
   return freqs;
 }
 
@@ -1057,7 +1057,7 @@ function updateCube3DFull() {
   projSideTitleEl.innerHTML  = `SIDE (${axisLetterHtml('Y')}–${axisLetterHtml('Z')})${proj3DRatioSuffix(yGroup, zGroup)}`;
 
   const freqs = [...xFreqs, ...yFreqs, ...zFreqs];
-  if (audioEngine.on) audioEngine.setFreqs(freqs);
+  syncAudioFreqs(freqs);
 }
 
 // Fast path for phase-slider drags: recompute the curve but skip re-reading
@@ -1072,7 +1072,7 @@ function updateCube3DFast() {
   renderCurveToCtx(projTopCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, z);
   renderCurveToCtx(projFrontCtx, PROJ_TOPFRONT_SIZE, PROJ_TOPFRONT_SIZE, x, y);
   renderCurveToCtx(projSideCtx, PROJ_SIDE_SIZE, PROJ_SIDE_SIZE, y, z);
-  if (audioEngine.on) audioEngine.setFreqs([...xFreqs, ...yFreqs, ...zFreqs]);
+  syncAudioFreqs([...xFreqs, ...yFreqs, ...zFreqs]);
 }
 
 // Rotation-only redraw for dragging the cube — the curve itself hasn't
@@ -1528,9 +1528,16 @@ class AudioEngine {
     }
   }
 
-  enable(freqs) {
+  // The voice harmonizer shares this context; the synth itself stays silent
+  // until enable() raises onGain.
+  ensureContext() {
     this._ensureBuilt();
     if (this.ctx.state === 'suspended') this.ctx.resume();
+    return this.ctx;
+  }
+
+  enable(freqs) {
+    this.ensureContext();
     this.setFreqs(freqs, true);
     this.on = true;
     this.onGain.gain.cancelScheduledValues(this.ctx.currentTime);
@@ -1618,6 +1625,242 @@ for (const key in audToneBtns) {
 }
 slVol.addEventListener('input', () => audioEngine.setVolume(parseFloat(slVol.value)));
 
+// ---------------------------------------------------------------------------
+// Voice harmonizer — mic in, one harmony voice per active note out: either a
+// pitch-shifted copy of the voice ('natural') or a synth voice shaped by it
+// ('messina', a vocoder). The DSP lives in harmonizer-worklet.js. It shares the synth's
+// AudioContext but has its own output path, so synth and voice switch on and
+// off independently. Each note's target comes from noteFreq(), so harmonies
+// follow the selected temperament.
+// ---------------------------------------------------------------------------
+const MAX_HARM_VOICES = 8;
+const HARM_MIN_F0 = { low: 70, high: 140 }; // lowest input pitch the detector looks for, Hz
+
+class Harmonizer {
+  constructor() {
+    this.ctx = null;
+    this.on = false;
+    this.character = 'natural'; // 'natural' (re-pitched copies of the voice) or 'messina' (vocoder)
+    this.mix = 1;
+    this.dry = false;
+    this.range = 'low';
+    this.targets = [];
+    this.onPitch = null;        // UI callback, receives {f0, delayMs} ~20× a second
+    this._sentKey = '';
+    this._moduleLoaded = false;
+  }
+
+  async enable(deviceId) {
+    const ctx = audioEngine.ensureContext(); // must run before the first await, inside the click
+    this.ctx = ctx;
+    if (!this._moduleLoaded) {
+      await ctx.audioWorklet.addModule('harmonizer-worklet.js');
+      this._moduleLoaded = true;
+    }
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        // Browsers enable these for calls; each adds delay or pumps the level.
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+        channelCount: 1,
+      },
+    });
+    this.source = ctx.createMediaStreamSource(this.stream);
+    this.voiceNode = new AudioWorkletNode(ctx, 'harmonizer', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+      channelCount: 1, channelCountMode: 'explicit', // a stereo interface gets summed to mono
+      processorOptions: { minF0: HARM_MIN_F0[this.range], character: this.character },
+    });
+    this.voiceNode.port.onmessage = (e) => {
+      if (e.data.type === 'pitch' && this.onPitch) this.onPitch(e.data);
+    };
+    this.outGain = ctx.createGain();
+    this.outGain.gain.value = this.mix;
+    this.dryGain = ctx.createGain();
+    this.dryGain.gain.value = this.dry ? 1 : 0;
+
+    this.source.connect(this.voiceNode);
+    this.voiceNode.connect(this.outGain);
+    this.outGain.connect(ctx.destination);
+    this.source.connect(this.dryGain);
+    this.dryGain.connect(ctx.destination);
+
+    this.on = true;
+    this._sentKey = '';
+    this.setTargets(this.targets);
+  }
+
+  // Also cleans up after an enable() that failed partway, so every node may be null.
+  disable() {
+    this.on = false;
+    const { stream, source, voiceNode, outGain, dryGain } = this;
+    this.stream = this.source = this.voiceNode = this.outGain = this.dryGain = null;
+    if (voiceNode) voiceNode.port.onmessage = null; // drop pitch reports still in flight
+    if (!stream) return;
+    const t = this.ctx.currentTime;
+    if (outGain) outGain.gain.setTargetAtTime(0, t, 0.01);
+    if (dryGain) dryGain.gain.setTargetAtTime(0, t, 0.01);
+    // tear down after the fade; stopping the tracks releases the mic and the browser's recording indicator
+    setTimeout(() => {
+      for (const track of stream.getTracks()) track.stop();
+      for (const node of [source, voiceNode, outGain, dryGain]) if (node) node.disconnect();
+    }, 80);
+  }
+
+  // Called on every note change (and every 40 ms tick in 3D), so only post
+  // to the audio thread when the chord actually changed.
+  setTargets(hz) {
+    this.targets = hz.slice(0, MAX_HARM_VOICES);
+    const key = this.targets.join(',');
+    if (!this.on || key === this._sentKey) return;
+    this._sentKey = key;
+    this.voiceNode.port.postMessage({ type: 'targets', hz: this.targets });
+  }
+
+  setMix(v) {
+    this.mix = v;
+    if (this.outGain) this.outGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+
+  setDry(on) {
+    this.dry = on;
+    if (this.dryGain) this.dryGain.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.02);
+  }
+
+  setRange(range) {
+    this.range = range;
+    if (this.voiceNode) this.voiceNode.port.postMessage({ type: 'config', minF0: HARM_MIN_F0[range] });
+  }
+
+  setCharacter(character) {
+    this.character = character;
+    if (this.voiceNode) this.voiceNode.port.postMessage({ type: 'config', character });
+  }
+
+  async listInputs() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+  }
+
+  // Mic-to-speaker delay of the harmony voices: device I/O as the browser
+  // reports it, plus the worklet's own pitch-period-dependent delay.
+  totalLatencyMs(delayMs) {
+    const track = this.stream && this.stream.getAudioTracks()[0];
+    const inLatency = (track && track.getSettings && track.getSettings().latency) || 0;
+    return ((this.ctx.baseLatency || 0) + (this.ctx.outputLatency || 0) + inLatency) * 1000 + delayMs;
+  }
+}
+
+const harmonizer = new Harmonizer();
+
+function syncAudioFreqs(freqs) {
+  if (audioEngine.on) audioEngine.setFreqs(freqs);
+  harmonizer.setTargets(freqs);
+}
+
+// Nearest note to a detected pitch in the current temperament, for the
+// input readout.
+function nearestNote(f0) {
+  const temp = activeState().temp;
+  let best = null;
+  for (let octave = 0; octave <= 8; octave++) {
+    for (const name of NOTE_NAMES) {
+      const cents = 1200 * Math.log2(f0 / noteFreq(name, octave, temp));
+      if (!best || Math.abs(cents) < Math.abs(best.cents)) best = { name, octave, cents };
+    }
+  }
+  return best;
+}
+
+const harmOnBtn = $('#harmOn');
+const harmInputSel = $('#harmInput');
+const slHarm = $('#slHarm');
+const harmDryBtn = $('#harmDry');
+const harmRangeRadios = { low: $('#harmRangeLow'), high: $('#harmRangeHigh') };
+const harmCharRadios = { natural: $('#harmCharNatural'), messina: $('#harmCharMessina') };
+const harmPitchEl = $('#harmPitch');
+const harmStatusEl = $('#harmStatus');
+let harmStarting = false;
+
+function harmErrorText(err) {
+  if (location.protocol === 'file:') return 'Voice needs the page served over http(s), not file:// (see README)';
+  if (!window.isSecureContext || !navigator.mediaDevices) return 'Voice needs https:// or localhost';
+  if (err && err.name === 'NotAllowedError') return 'Mic permission denied';
+  if (err && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) return 'No microphone found';
+  return `Mic error: ${err && err.message ? err.message : err}`;
+}
+
+function updateHarmUI() {
+  harmOnBtn.classList.toggle('on', harmonizer.on);
+  harmOnBtn.textContent = harmonizer.on ? 'Voice on' : 'Voice off';
+  if (!harmonizer.on) harmPitchEl.textContent = '';
+}
+
+async function refreshHarmInputs() {
+  const inputs = await harmonizer.listInputs();
+  const current = harmInputSel.value;
+  harmInputSel.innerHTML = '';
+  harmInputSel.add(new Option('Default input', ''));
+  inputs.forEach((d, i) => {
+    if (d.deviceId === 'default' || d.deviceId === '') return; // covered by "Default input"
+    harmInputSel.add(new Option(d.label || `Input ${i + 1}`, d.deviceId));
+  });
+  harmInputSel.value = [...harmInputSel.options].some(o => o.value === current) ? current : '';
+}
+
+async function startHarmonizer() {
+  harmStarting = true;
+  harmStatusEl.textContent = 'starting…';
+  try {
+    harmonizer.setTargets(activeFreqs());
+    await harmonizer.enable(harmInputSel.value);
+    harmStatusEl.textContent = '';
+    refreshHarmInputs(); // device labels only become readable once mic permission is granted
+  } catch (err) {
+    harmonizer.disable();
+    harmStatusEl.textContent = harmErrorText(err);
+  }
+  harmStarting = false;
+  updateHarmUI();
+}
+
+harmonizer.onPitch = ({ f0, delayMs }) => {
+  if (!f0) { harmPitchEl.textContent = 'In: —'; return; }
+  const nn = nearestNote(f0);
+  const c = Math.round(nn.cents);
+  harmPitchEl.textContent = `In: ${nn.name}${nn.octave} ${c < 0 ? '−' : '+'}${Math.abs(c)}¢`;
+  harmStatusEl.textContent = `≈ ${Math.round(harmonizer.totalLatencyMs(delayMs))} ms`;
+};
+
+harmOnBtn.addEventListener('click', () => {
+  if (harmStarting) return;
+  if (harmonizer.on) {
+    harmonizer.disable();
+    harmStatusEl.textContent = '';
+    updateHarmUI();
+  } else {
+    startHarmonizer();
+  }
+});
+harmInputSel.addEventListener('change', () => {
+  harmInputSel.blur();
+  if (harmonizer.on && !harmStarting) { harmonizer.disable(); startHarmonizer(); }
+});
+slHarm.addEventListener('input', () => harmonizer.setMix(parseFloat(slHarm.value)));
+harmDryBtn.addEventListener('click', () => {
+  harmonizer.setDry(!harmonizer.dry);
+  harmDryBtn.classList.toggle('on', harmonizer.dry);
+});
+for (const key in harmRangeRadios) {
+  harmRangeRadios[key].addEventListener('change', () => harmonizer.setRange(key));
+}
+for (const key in harmCharRadios) {
+  harmCharRadios[key].addEventListener('change', () => harmonizer.setCharacter(key));
+}
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', refreshHarmInputs);
+}
+
 // Clicking any button or radio (mode toggle, temperament, note count, …)
 // leaves it focused; note-playing keydowns still reach window either way,
 // but a lingering focus ring is confusing and (for buttons specifically) a
@@ -1635,7 +1878,7 @@ document.addEventListener('click', (ev) => {
 window.addEventListener('keydown', (ev) => {
   if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
   const activeTag = document.activeElement && document.activeElement.tagName;
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return; // let the focused field handle its own typing
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return; // let the focused field handle its own typing
   const key = ev.key.toLowerCase();
   const st = activeState();
   const n = activeSlotCount();
@@ -2070,6 +2313,7 @@ initSlots();
 initSlots3D();
 fullRedraw();
 initMidi();
+refreshHarmInputs();
 
 window.addEventListener('resize', () => {
   resizeCanvas();
